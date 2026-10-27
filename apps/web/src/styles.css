@@ -1,0 +1,246 @@
+:root {
+  /* Ghana flag palette */
+  --gh-red: #ce1126;
+  --gh-gold: #fcd116;
+  --gh-green: #006b3f;
+  --ink: #0e1726;
+  --panel: rgba(14, 23, 38, 0.92);
+  --panel-soft: rgba(255, 255, 255, 0.06);
+  --text: #eef2f7;
+  --muted: #9fb0c3;
+  --border: rgba(255, 255, 255, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--ink);
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.brand h1 {
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.flag-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(
+    180deg,
+    var(--gh-red) 0 33%,
+    var(--gh-gold) 33% 66%,
+    var(--gh-green) 66% 100%
+  );
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+.tagline {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0 0 16px;
+}
+
+.card {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.card h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+
+select,
+button {
+  width: 100%;
+  font: inherit;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #121d2e;
+  color: var(--text);
+  padding: 9px 11px;
+}
+select:focus {
+  outline: 2px solid var(--gh-gold);
+}
+
+.seg {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.seg button {
+  background: #121d2e;
+  cursor: pointer;
+}
+.seg button.active {
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn-primary {
+  margin-top: 14px;
+  background: var(--gh-red);
+  border-color: var(--gh-red);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.result {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.stat {
+  background: #0d1522;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.stat .k {
+  font-size: 11px;
+  color: var(--muted);
+}
+.stat .v {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.stat .v.good {
+  color: #4ade80;
+}
+
+.path {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* ---------- Map controls ---------- */
+.layer-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(14px);
+}
+.layer-toggle button {
+  width: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 9px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.layer-toggle button.active {
+  background: var(--gh-gold);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.sat-list {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-height: 110px;
+  overflow-y: auto;
+}
+.sat-list .sat {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.maplibregl-popup-content {
+  background: var(--ink);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+.maplibregl-popup-tip {
+  border-top-color: var(--ink) !important;
+  border-bottom-color: var(--ink) !important;
+}
