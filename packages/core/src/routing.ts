@@ -17,11 +17,21 @@ import { PriorityQueue } from "./priority-queue.ts";
 
 export type CostMode = "distance" | "time";
 
+/** A per-edge speed factor in (0, 1]; lower means slower (more traffic). */
+export interface SpeedFactorSource {
+  speedFactor(edge: Edge, date: Date): number;
+}
+
 export interface RouteOptions {
   /** Minimise travel time (default) or raw distance. */
   metric?: CostMode;
   /** How the traveller moves; affects speed and therefore time. */
   mode?: TravelMode;
+  /** Optional traffic model + time; slows time-based costs where congested. */
+  traffic?: { model: SpeedFactorSource; date: Date };
+  /** Optional extra cost (seconds or metres) added to specific edges, used to
+   *  coax out alternative routes. */
+  edgePenalty?: (edge: Edge) => number;
 }
 
 export interface RouteResult {
@@ -29,8 +39,10 @@ export interface RouteResult {
   readonly path: NodeId[];
   /** Total distance along the route, in metres. */
   readonly distanceM: number;
-  /** Total travel time along the route, in seconds. */
+  /** Free-flow travel time along the route, in seconds. */
   readonly timeS: number;
+  /** Travel time including the traffic model, if one was supplied. */
+  readonly trafficTimeS?: number;
   /** How many nodes the search settled — useful for comparing algorithms. */
   readonly nodesExplored: number;
 }
@@ -42,8 +54,24 @@ function fastestKmh(mode: TravelMode): number {
 }
 
 /** Cost contributed by a single edge, under the chosen metric and mode. */
-function edgeCost(edge: Edge, metric: CostMode, mode: TravelMode): number {
-  return metric === "distance" ? edge.lengthM : edgeTravelSeconds(edge, mode);
+function edgeCost(
+  edge: Edge,
+  metric: CostMode,
+  mode: TravelMode,
+  opts: RouteOptions,
+): number {
+  let cost: number;
+  if (metric === "distance") {
+    cost = edge.lengthM;
+  } else {
+    cost = edgeTravelSeconds(edge, mode);
+    if (opts.traffic) {
+      const f = opts.traffic.model.speedFactor(edge, opts.traffic.date);
+      if (f > 0) cost /= f; // congestion stretches the time
+    }
+  }
+  if (opts.edgePenalty) cost += opts.edgePenalty(edge);
+  return cost;
 }
 
 /**
@@ -73,21 +101,34 @@ function reconstruct(
   destination: NodeId,
   nodesExplored: number,
   mode: TravelMode,
+  opts: RouteOptions,
 ): RouteResult {
   const path: NodeId[] = [destination];
   let distanceM = 0;
   let timeS = 0;
+  let trafficTimeS = 0;
   let current = destination;
   while (current !== origin) {
     const edge = cameFrom.get(current);
     if (!edge) break; // unreachable
     distanceM += edge.lengthM;
-    timeS += edgeTravelSeconds(edge, mode);
+    const t = edgeTravelSeconds(edge, mode);
+    timeS += t;
+    if (opts.traffic) {
+      const f = opts.traffic.model.speedFactor(edge, opts.traffic.date);
+      trafficTimeS += f > 0 ? t / f : t;
+    }
     current = edge.from;
     path.push(current);
   }
   path.reverse();
-  return { path, distanceM, timeS, nodesExplored };
+  return {
+    path,
+    distanceM,
+    timeS,
+    nodesExplored,
+    ...(opts.traffic ? { trafficTimeS } : {}),
+  };
 }
 
 /** Classic Dijkstra. Returns null if the destination is unreachable. */
@@ -110,7 +151,7 @@ export function dijkstra(
   while (!frontier.isEmpty()) {
     const current = frontier.pop()!;
     if (current === destination) {
-      return reconstruct(cameFrom, origin, destination, settled.size, mode);
+      return reconstruct(cameFrom, origin, destination, settled.size, mode, options);
     }
     if (settled.has(current)) continue;
     settled.add(current);
@@ -118,7 +159,7 @@ export function dijkstra(
     const base = dist.get(current)!;
     for (const edge of graph.neighbors(current)) {
       if (settled.has(edge.to)) continue;
-      const tentative = base + edgeCost(edge, metric, mode);
+      const tentative = base + edgeCost(edge, metric, mode, options);
       if (tentative < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, tentative);
         cameFrom.set(edge.to, edge);
@@ -149,7 +190,7 @@ export function aStar(
   while (!frontier.isEmpty()) {
     const current = frontier.pop()!;
     if (current === destination) {
-      return reconstruct(cameFrom, origin, destination, settled.size, mode);
+      return reconstruct(cameFrom, origin, destination, settled.size, mode, options);
     }
     if (settled.has(current)) continue;
     settled.add(current);
@@ -157,7 +198,7 @@ export function aStar(
     const base = gScore.get(current)!;
     for (const edge of graph.neighbors(current)) {
       if (settled.has(edge.to)) continue;
-      const tentative = base + edgeCost(edge, metric, mode);
+      const tentative = base + edgeCost(edge, metric, mode, options);
       if (tentative < (gScore.get(edge.to) ?? Infinity)) {
         gScore.set(edge.to, tentative);
         cameFrom.set(edge.to, edge);

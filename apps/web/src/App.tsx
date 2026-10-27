@@ -2,13 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  aStar,
-  dijkstra,
+  alternativeRoutes,
   buildConstellation,
   buildDirections,
-  buildGhanaGraph,
   randomTrip,
-  ReverseGeocoder,
   simulateFix,
   TripSimulator,
   type CostMode,
@@ -18,8 +15,11 @@ import {
   type TripState,
 } from "@ghmap/core";
 import { PlaceInput } from "./PlaceInput.tsx";
+import { loadDataset, type Dataset } from "./dataset.ts";
+import { getRecent, getSaved, pushRecent, toggleSaved } from "./storage.ts";
 import {
   BASE_STYLE,
+  EMPTY_FC,
   EMPTY_LINE,
   GHANA_BOUNDS,
   GHANA_CENTER,
@@ -32,6 +32,7 @@ import {
   formatKm,
   readUrlState,
   routeToGeoJSON,
+  routeTrafficFeatures,
   writeUrlState,
 } from "./lib.ts";
 
@@ -59,22 +60,21 @@ export function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const meMarker = useRef<maplibregl.Marker | null>(null);
+  const deviceMarker = useRef<maplibregl.Marker | null>(null);
 
-  const graph = useMemo(() => buildGhanaGraph(), []);
-  const constellation = useMemo(() => buildConstellation(), []);
-  const geocoder = useMemo(() => new ReverseGeocoder(graph), [graph]);
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   const initial = useMemo(() => readUrlState(), []);
-  const [ready, setReady] = useState(false);
   const [layer, setLayer] = useState<Layer>(initial.view ?? "streets");
-  const [origin, setOrigin] = useState<string | null>(initial.origin ?? "accra");
-  const [destination, setDestination] = useState<string | null>(
-    initial.destination ?? "kumasi",
-  );
+  const [origin, setOrigin] = useState<string | null>(initial.origin ?? null);
+  const [destination, setDestination] = useState<string | null>(initial.destination ?? null);
   const [mode, setMode] = useState<TravelMode>(initial.mode ?? "drive");
   const [metric, setMetric] = useState<CostMode>(initial.metric ?? "time");
+  const [trafficOn, setTrafficOn] = useState(true);
 
-  const [route, setRoute] = useState<RouteResult | null>(null);
+  const [routes, setRoutes] = useState<RouteResult[]>([]);
+  const [selected, setSelected] = useState(0);
   const [steps, setSteps] = useState<DirectionStep[]>([]);
   const [note, setNote] = useState("");
   const [showSteps, setShowSteps] = useState(false);
@@ -82,7 +82,10 @@ export function App() {
   const [menu, setMenu] = useState<Menu>(null);
   const [copied, setCopied] = useState(false);
 
-  // --- Navigation state ---
+  const [saved, setSaved] = useState<string[]>([]);
+  const [recent, setRecent] = useState<string[]>([]);
+
+  // Navigation
   const [navActive, setNavActive] = useState(false);
   const [navState, setNavState] = useState<TripState | null>(null);
   const [navFactor, setNavFactor] = useState(40);
@@ -93,14 +96,30 @@ export function App() {
   const navStepCumRef = useRef<number[]>([]);
   const lastNavUi = useRef(0);
 
-  // --- Fleet state ---
+  // Fleet + device tracking
   const [fleetActive, setFleetActive] = useState(false);
   const fleetRef = useRef<Vehicle[]>([]);
+  const [tracking, setTracking] = useState(false);
+  const watchId = useRef<number | null>(null);
 
-  const nameOf = useCallback(
-    (id: string) => graph.getNode(id)?.name ?? id,
-    [graph],
-  );
+  const constellation = useMemo(() => buildConstellation(), []);
+  const graph = dataset?.graph ?? null;
+  const gazetteer = dataset?.gazetteer ?? null;
+  const traffic = dataset?.traffic ?? null;
+
+  const nameOf = useCallback((id: string) => gazetteer?.get(id)?.name ?? id, [gazetteer]);
+
+  // --- Load dataset + saved/recent once ---
+  useEffect(() => {
+    setSaved(getSaved());
+    setRecent(getRecent());
+    loadDataset().then((d) => {
+      setDataset(d);
+      // Sensible defaults if URL didn't specify.
+      setOrigin((o) => o ?? (d.gazetteer.search("Accra", 1)[0]?.id ?? null));
+      setDestination((dn) => dn ?? (d.gazetteer.search("Kumasi", 1)[0]?.id ?? null));
+    });
+  }, []);
 
   // --- Initialise the map once ---
   useEffect(() => {
@@ -127,11 +146,15 @@ export function App() {
         tileSize: 256,
         attribution: "Imagery © Esri",
       });
+      map.addLayer({ id: "satellite", type: "raster", source: "satellite", layout: { visibility: "none" } });
+
+      map.addSource("route-alts", { type: "geojson", data: EMPTY_FC });
       map.addLayer({
-        id: "satellite",
-        type: "raster",
-        source: "satellite",
-        layout: { visibility: "none" },
+        id: "route-alts",
+        type: "line",
+        source: "route-alts",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#8aa0b6", "line-width": 5, "line-opacity": 0.55 },
       });
 
       map.addSource("route", { type: "geojson", data: EMPTY_LINE });
@@ -140,39 +163,26 @@ export function App() {
         type: "line",
         source: "route",
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ffffff", "line-width": 8, "line-opacity": 0.6 },
+        paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.7 },
       });
       map.addLayer({
         id: "route-line",
         type: "line",
         source: "route",
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#ce1126", "line-width": 4.5 },
+        paint: { "line-color": "#1a73e8", "line-width": 5.5 },
       });
 
-      for (const city of graph.nodeList()) {
-        const el = document.createElement("div");
-        const big = city.kind === "capital" || city.kind === "city";
-        el.className = "city-marker";
-        el.style.cssText = `width:${big ? 12 : 8}px;height:${big ? 12 : 8}px;background:${
-          big ? "#fcd116" : "#ffffff"
-        }`;
-        el.title = city.name;
-        el.addEventListener("click", (e) => {
-          e.stopPropagation();
-          setDestination(city.id);
-        });
-        new maplibregl.Marker({ element: el })
-          .setLngLat([city.location.lng, city.location.lat])
-          .setPopup(
-            new maplibregl.Popup({ offset: 12 }).setHTML(
-              `<strong>${city.name}</strong><br/>${city.region ?? ""}`,
-            ),
-          )
-          .addTo(map);
-      }
+      map.addSource("route-traffic", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "route-traffic",
+        type: "line",
+        source: "route-traffic",
+        layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
+        paint: { "line-color": ["get", "color"], "line-width": 5.5 },
+      });
 
-      setReady(true);
+      setMapLoaded(true);
     });
 
     map.on("contextmenu", (e) => {
@@ -181,7 +191,7 @@ export function App() {
         y: e.point.y,
         lng: e.lngLat.lng,
         lat: e.lngLat.lat,
-        label: geocoder.label({ lat: e.lngLat.lat, lng: e.lngLat.lng }),
+        label: gazetteerRef.current?.label({ lat: e.lngLat.lat, lng: e.lngLat.lng }) ?? "",
       });
     });
     map.on("click", () => setMenu(null));
@@ -191,109 +201,153 @@ export function App() {
       map.remove();
       mapRef.current = null;
     };
-  }, [graph, geocoder]);
+  }, []);
+
+  // Keep a ref to the gazetteer for map event handlers (which close over nothing).
+  const gazetteerRef = useRef(gazetteer);
+  useEffect(() => {
+    gazetteerRef.current = gazetteer;
+  }, [gazetteer]);
+
+  // --- Seed-mode city markers (OSM mode relies on base-map labels) ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !dataset || dataset.source !== "seed" || !gazetteer) return;
+    const markers: maplibregl.Marker[] = [];
+    for (const node of dataset.graph.nodeList()) {
+      const el = document.createElement("div");
+      const big = node.kind === "capital" || node.kind === "city";
+      el.className = "city-marker";
+      el.style.cssText = `width:${big ? 12 : 8}px;height:${big ? 12 : 8}px;background:${big ? "#fcd116" : "#ffffff"}`;
+      el.title = node.name;
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setDestination(node.id);
+      });
+      markers.push(
+        new maplibregl.Marker({ element: el })
+          .setLngLat([node.location.lng, node.location.lat])
+          .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(`<strong>${node.name}</strong><br/>${node.region ?? ""}`))
+          .addTo(map),
+      );
+    }
+    return () => markers.forEach((m) => m.remove());
+  }, [mapLoaded, dataset, gazetteer]);
 
   // --- Satellite layer toggle ---
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready) return;
-    map.setLayoutProperty(
-      "satellite",
-      "visibility",
-      layer === "satellite" ? "visible" : "none",
-    );
-  }, [layer, ready]);
+    if (!map || !mapLoaded) return;
+    map.setLayoutProperty("satellite", "visibility", layer === "satellite" ? "visible" : "none");
+  }, [layer, mapLoaded]);
 
-  // --- Compute the route whenever inputs change ---
+  // --- Compute routes whenever inputs change ---
   useEffect(() => {
-    if (!origin || !destination || origin === destination) {
-      setRoute(null);
+    if (!graph || !origin || !destination || origin === destination) {
+      setRoutes([]);
       setSteps([]);
-      setNote(origin === destination ? "Choose two different places." : "");
+      setNote(origin && origin === destination ? "Choose two different places." : "");
       return;
     }
-    const r = aStar(graph, origin, destination, { metric, mode });
-    setRoute(r);
-    if (r) {
-      setSteps(buildDirections(graph, r, mode));
-      const d = dijkstra(graph, origin, destination, { metric, mode });
-      setNote(
-        `A* settled ${r.nodesExplored} nodes` + (d ? `, Dijkstra ${d.nodesExplored}` : ""),
-      );
+    const trafficOpt =
+      trafficOn && metric === "time" ? { model: traffic!, date: new Date() } : undefined;
+    const alts = alternativeRoutes(graph, origin, destination, {
+      metric,
+      mode,
+      count: 3,
+      ...(trafficOpt ? { traffic: trafficOpt } : {}),
+    });
+    setRoutes(alts);
+    setSelected(0);
+    if (alts[0]) {
+      setSteps(buildDirections(graph, alts[0], mode));
+      setNote("");
     } else {
       setSteps([]);
       setNote("No route found.");
     }
-  }, [graph, origin, destination, metric, mode]);
+  }, [graph, traffic, origin, destination, metric, mode, trafficOn]);
+
+  // Rebuild steps when the selected alternative changes.
+  useEffect(() => {
+    if (graph && routes[selected]) setSteps(buildDirections(graph, routes[selected]!, mode));
+  }, [graph, routes, selected, mode]);
 
   useEffect(() => {
     writeUrlState({ origin, destination, mode, metric, view: layer });
   }, [origin, destination, mode, metric, layer]);
 
-  // --- Draw / fit the route (skip auto-fit while navigating) ---
+  // --- Draw routes (selected + alternatives + optional traffic colouring) ---
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready) return;
-    const src = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
-    if (!route) {
-      src.setData(EMPTY_LINE);
+    if (!map || !mapLoaded || !graph) return;
+    const routeSrc = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
+    const altSrc = map.getSource("route-alts") as maplibregl.GeoJSONSource | undefined;
+    const trafficSrc = map.getSource("route-traffic") as maplibregl.GeoJSONSource | undefined;
+    if (!routeSrc || !altSrc || !trafficSrc) return;
+
+    const sel = routes[selected];
+    if (!sel) {
+      routeSrc.setData(EMPTY_LINE);
+      altSrc.setData(EMPTY_FC);
+      trafficSrc.setData(EMPTY_FC);
       return;
     }
-    const line = routeToGeoJSON(graph, route);
-    src.setData(line);
-    if (navActive) return;
-    const coords = line.geometry.coordinates;
-    if (coords.length > 1) {
-      const bounds = coords.reduce(
-        (b, c) => b.extend(c as [number, number]),
-        new maplibregl.LngLatBounds(
-          coords[0] as [number, number],
-          coords[0] as [number, number],
-        ),
-      );
-      map.fitBounds(bounds, { padding: { top: 90, bottom: 90, left: 400, right: 90 } });
+    routeSrc.setData(routeToGeoJSON(graph, sel));
+    altSrc.setData({
+      type: "FeatureCollection",
+      features: routes
+        .filter((_, i) => i !== selected)
+        .map((r) => routeToGeoJSON(graph, r)),
+    });
+
+    const showTraffic = trafficOn && metric === "time";
+    if (showTraffic && traffic) {
+      trafficSrc.setData(routeTrafficFeatures(graph, sel, traffic, new Date()));
+    } else {
+      trafficSrc.setData(EMPTY_FC);
     }
-  }, [route, graph, ready, navActive]);
+    map.setLayoutProperty("route-traffic", "visibility", showTraffic ? "visible" : "none");
+    map.setLayoutProperty("route-line", "visibility", showTraffic ? "none" : "visible");
+
+    if (!navActive) {
+      const coords = routeToGeoJSON(graph, sel).geometry.coordinates;
+      if (coords.length > 1) {
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c as [number, number]),
+          new maplibregl.LngLatBounds(coords[0] as [number, number], coords[0] as [number, number]),
+        );
+        map.fitBounds(bounds, { padding: { top: 90, bottom: 90, left: 400, right: 90 } });
+      }
+    }
+  }, [routes, selected, graph, mapLoaded, trafficOn, metric, traffic, navActive]);
 
   // ====================================================================
-  // Real-time animation loop (drives navigation + fleet)
+  // Real-time animation loop (navigation + fleet)
   // ====================================================================
   useEffect(() => {
     if (!navActive && !fleetActive) return;
     let raf = 0;
     let last = performance.now();
-
     const tick = (now: number) => {
       const dt = Math.min((now - last) / 1000, 0.5);
       last = now;
       const map = mapRef.current;
-
-      // --- Navigation ---
       if (navActive && navSimRef.current && map) {
         navElapsedRef.current += dt * navFactor;
         const st = navSimRef.current.stateAt(navElapsedRef.current);
         navMarker.current?.setLngLat([st.position.lng, st.position.lat]);
-        map.jumpTo({
-          center: [st.position.lng, st.position.lat],
-          zoom: 12.5,
-          bearing: st.bearingDeg,
-          pitch: 45,
-        });
+        map.jumpTo({ center: [st.position.lng, st.position.lat], zoom: 13, bearing: st.bearingDeg, pitch: 50 });
         if (now - lastNavUi.current > 350) {
           lastNavUi.current = now;
           setNavState(st);
-          const { fix, visible, errorM } = simulateFix(
-            constellation,
-            st.position,
-            1200 + navElapsedRef.current,
-            { clockBiasM: 60_000, noiseM: 6 },
-          );
+          const { fix, visible, errorM } = simulateFix(constellation, st.position, 1200 + navElapsedRef.current, {
+            clockBiasM: 60_000,
+            noiseM: 6,
+          });
           setNavFix(fix ? { errorM: errorM ?? 0, sats: visible.length } : null);
         }
       }
-
-      // --- Fleet ---
       if (fleetActive && map) {
         for (const v of fleetRef.current) {
           v.elapsed += dt * v.factor;
@@ -304,7 +358,6 @@ export function App() {
           if (st.arrived) recycleVehicle(v);
         }
       }
-
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -312,18 +365,16 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navActive, fleetActive, navFactor]);
 
-  // ---- Navigation controls ----
   function startNav() {
     const map = mapRef.current;
-    if (!map || !route || route.path.length < 2) return;
-    const sim = new TripSimulator(graph, route, mode);
+    const sel = routes[selected];
+    if (!map || !graph || !sel || sel.path.length < 2) return;
+    const sim = new TripSimulator(graph, sel, mode);
     navSimRef.current = sim;
     navElapsedRef.current = 0;
     lastNavUi.current = 0;
-    // Cumulative distance at the end of each step, for the live banner.
     let acc = 0;
     navStepCumRef.current = steps.map((s) => (acc += s.distanceM));
-
     if (!navMarker.current) {
       const el = document.createElement("div");
       el.className = "nav-marker";
@@ -343,12 +394,10 @@ export function App() {
     navMarker.current = null;
     setNavState(null);
     setNavFix(null);
-    const map = mapRef.current;
-    if (map) map.easeTo({ pitch: 0, bearing: 0, zoom: 6.5, duration: 600 });
+    mapRef.current?.easeTo({ pitch: 0, bearing: 0, zoom: 6.5, duration: 600 });
   }
 
-  // ---- Fleet controls ----
-  function makeVehicleEl(): { el: HTMLElement; arrow: HTMLElement } {
+  function makeVehicleEl() {
     const el = document.createElement("div");
     el.className = "veh";
     const arrow = document.createElement("div");
@@ -356,19 +405,16 @@ export function App() {
     el.appendChild(arrow);
     return { el, arrow };
   }
-
-  function vehicleHtml(v: Vehicle, st: TripState): string {
+  function vehicleHtml(v: Vehicle, st: TripState) {
     return (
-      `<strong>${v.label}</strong><br/>` +
-      `${v.originName} → ${v.destName}<br/>` +
+      `<strong>${v.label}</strong><br/>${v.originName} → ${v.destName}<br/>` +
       `${st.speedKmh.toFixed(0)} km/h · ${formatKm(st.distanceRemainingM)} left<br/>` +
       `ETA ${arrivalTime(st.timeRemainingS)} · ${Math.round(st.progress * 100)}% there`
     );
   }
-
   function spawnVehicle(i: number): Vehicle | null {
     const map = mapRef.current;
-    if (!map) return null;
+    if (!map || !graph) return null;
     const trip = randomTrip(graph, Math.random, "drive");
     if (!trip) return null;
     const { el, arrow } = makeVehicleEl();
@@ -393,8 +439,8 @@ export function App() {
     });
     return v;
   }
-
   function recycleVehicle(v: Vehicle) {
+    if (!graph) return;
     const trip = randomTrip(graph, Math.random, "drive");
     if (!trip) return;
     v.sim = trip.sim;
@@ -402,7 +448,6 @@ export function App() {
     v.originName = nameOf(trip.origin);
     v.destName = nameOf(trip.destination);
   }
-
   function startFleet() {
     const list: Vehicle[] = [];
     for (let i = 0; i < FLEET_SIZE; i++) {
@@ -412,25 +457,65 @@ export function App() {
     fleetRef.current = list;
     setFleetActive(true);
   }
-
   function stopFleet() {
-    for (const v of fleetRef.current) v.marker.remove();
+    fleetRef.current.forEach((v) => v.marker.remove());
     fleetRef.current = [];
     setFleetActive(false);
   }
 
-  // --- "Use my location" ---
+  // --- Real device tracking (watchPosition) ---
+  function toggleTracking() {
+    if (tracking) {
+      if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
+      watchId.current = null;
+      deviceMarker.current?.remove();
+      deviceMarker.current = null;
+      setTracking(false);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setNote("Geolocation isn't available in this browser.");
+      return;
+    }
+    setTracking(true);
+    setNote("Tracking your live location…");
+    watchId.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const map = mapRef.current;
+        if (!map) return;
+        const here: [number, number] = [pos.coords.longitude, pos.coords.latitude];
+        if (!deviceMarker.current) {
+          const el = document.createElement("div");
+          el.className = "device-marker";
+          const dot = document.createElement("div");
+          dot.className = "device-dot";
+          el.appendChild(dot);
+          deviceMarker.current = new maplibregl.Marker({ element: el });
+        }
+        deviceMarker.current.setLngLat(here).addTo(map);
+        const el = deviceMarker.current.getElement().firstElementChild as HTMLElement;
+        if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading)) {
+          el.style.transform = `rotate(${pos.coords.heading}deg)`;
+          el.classList.add("has-heading");
+        }
+        if (!navActive) map.easeTo({ center: here, zoom: Math.max(map.getZoom(), 13), duration: 600 });
+      },
+      () => {
+        setNote("Couldn't track location (permission denied?).");
+        setTracking(false);
+      },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 },
+    );
+  }
+
   const useMyLocation = useCallback(
     (assign: (id: string) => void) => {
-      if (!navigator.geolocation) {
-        setNote("Geolocation isn't available in this browser.");
-        return;
-      }
+      if (!navigator.geolocation || !gazetteer) return setNote("Geolocation unavailable.");
       setNote("Locating you…");
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          const hit = geocoder.nearest(here);
+          const hit = gazetteer.nearest(here);
           const map = mapRef.current;
           if (map) {
             if (!meMarker.current) {
@@ -442,18 +527,26 @@ export function App() {
             map.flyTo({ center: [here.lng, here.lat], zoom: 10 });
           }
           if (hit) {
-            assign(hit.node.id);
-            setNote(`You're near ${hit.node.name}.`);
-          } else {
-            setNote("You appear to be outside Ghana.");
-          }
+            assign(hit.place.id);
+            setNote(`You're near ${hit.place.name}.`);
+          } else setNote("You appear to be outside the map.");
         },
-        () => setNote("Couldn't get your location (permission denied?)."),
+        () => setNote("Couldn't get your location."),
         { enableHighAccuracy: true, timeout: 8000 },
       );
     },
-    [geocoder],
+    [gazetteer],
   );
+
+  function onSelectPlace(setter: (id: string) => void) {
+    return (id: string) => {
+      setter(id);
+      setRecent(pushRecent(id));
+    };
+  }
+  function onToggle(id: string) {
+    setSaved(toggleSaved(id));
+  }
 
   function share() {
     navigator.clipboard?.writeText(window.location.href).then(() => {
@@ -461,47 +554,52 @@ export function App() {
       setTimeout(() => setCopied(false), 1800);
     });
   }
-
   function swap() {
     setOrigin(destination);
     setDestination(origin);
   }
 
-  // Live navigation banner: which step are we on, and how far to the next turn.
   const navBanner = (() => {
     if (!navState) return null;
     const cum = navStepCumRef.current;
     let idx = cum.findIndex((end) => navState.distanceCoveredM < end - 1);
     if (idx === -1) idx = steps.length - 1;
-    const step = steps[idx];
     const next = steps[idx + 1] ?? steps[steps.length - 1];
     const toTurn = Math.max(0, (cum[idx] ?? navState.distanceCoveredM) - navState.distanceCoveredM);
-    return { step, next, toTurn };
+    return { next, toTurn };
   })();
+
+  const sel = routes[selected];
+  const selTime = sel ? (trafficOn && sel.trafficTimeS != null ? sel.trafficTimeS : sel.timeS) : 0;
 
   return (
     <div className="app">
       <div id="map" ref={mapContainer} />
 
-      {/* Top-right controls */}
+      {!dataset ? (
+        <div className="loading">
+          <div className="flag-dot big" />
+          <div>Loading Ghana map…</div>
+        </div>
+      ) : null}
+
       <div className="top-controls">
         <div className="layer-toggle">
           <button className={layer === "streets" ? "active" : ""} onClick={() => setLayer("streets")}>
             Streets
           </button>
-          <button
-            className={layer === "satellite" ? "active" : ""}
-            onClick={() => setLayer("satellite")}
-          >
+          <button className={layer === "satellite" ? "active" : ""} onClick={() => setLayer("satellite")}>
             Satellite
           </button>
         </div>
-        <button
-          className={`fleet-btn ${fleetActive ? "active" : ""}`}
-          onClick={() => (fleetActive ? stopFleet() : startFleet())}
-          title="Show live vehicles moving across Ghana"
-        >
-          {fleetActive ? "● Live vehicles on" : "○ Live vehicles"}
+        <button className={`pill ${trafficOn ? "active" : ""}`} onClick={() => setTrafficOn((t) => !t)} title="Show live traffic estimate">
+          {trafficOn ? "● Traffic on" : "○ Traffic"}
+        </button>
+        <button className={`pill ${tracking ? "active" : ""}`} onClick={toggleTracking} title="Follow my live GPS location">
+          {tracking ? "● Tracking me" : "◎ Track me"}
+        </button>
+        <button className={`pill ${fleetActive ? "active" : ""}`} onClick={() => (fleetActive ? stopFleet() : startFleet())} title="Live vehicles across Ghana">
+          {fleetActive ? "● Live vehicles" : "○ Live vehicles"}
         </button>
       </div>
 
@@ -510,8 +608,8 @@ export function App() {
           <div className="ctx-label">{menu.label}</div>
           <button
             onMouseDown={() => {
-              const hit = geocoder.nearest({ lat: menu.lat, lng: menu.lng });
-              if (hit) setOrigin(hit.node.id);
+              const hit = gazetteer?.nearest({ lat: menu.lat, lng: menu.lng });
+              if (hit) setOrigin(hit.place.id);
               setMenu(null);
             }}
           >
@@ -519,8 +617,8 @@ export function App() {
           </button>
           <button
             onMouseDown={() => {
-              const hit = geocoder.nearest({ lat: menu.lat, lng: menu.lng });
-              if (hit) setDestination(hit.node.id);
+              const hit = gazetteer?.nearest({ lat: menu.lat, lng: menu.lng });
+              if (hit) setDestination(hit.place.id);
               setMenu(null);
             }}
           >
@@ -529,16 +627,14 @@ export function App() {
         </div>
       ) : null}
 
-      {/* ---------- Navigation overlay ---------- */}
+      {/* Navigation overlay */}
       {navActive && navState ? (
         <>
           <div className="nav-top">
-            <div className="nav-maneuver">
-              {MANEUVER_ICON[navBanner?.next?.maneuver ?? "continue"]}
-            </div>
+            <div className="nav-maneuver">{MANEUVER_ICON[navBanner?.next?.maneuver ?? "continue"]}</div>
             <div className="nav-instruction">
               {navState.arrived ? (
-                <strong>You have arrived at {nameOf(destination!)}</strong>
+                <strong>You have arrived at {destination ? nameOf(destination) : ""}</strong>
               ) : (
                 <>
                   <div className="nav-dist">{formatKm(navBanner?.toTurn ?? 0)}</div>
@@ -547,7 +643,6 @@ export function App() {
               )}
             </div>
           </div>
-
           <div className="nav-bottom">
             <div className="nav-eta">
               <span className="eta-time">{formatDuration(navState.timeRemainingS)}</span>
@@ -572,14 +667,7 @@ export function App() {
             <div className="nav-actions">
               <label className="speedlbl">
                 Sim speed {navFactor}×
-                <input
-                  type="range"
-                  min={5}
-                  max={200}
-                  step={5}
-                  value={navFactor}
-                  onChange={(e) => setNavFactor(Number(e.target.value))}
-                />
+                <input type="range" min={5} max={200} step={5} value={navFactor} onChange={(e) => setNavFactor(Number(e.target.value))} />
               </label>
               <button className="nav-stop" onClick={stopNav}>
                 {navState.arrived ? "Done" : "End"}
@@ -592,8 +680,8 @@ export function App() {
         </>
       ) : null}
 
-      {/* ---------- Sidebar (hidden during navigation) ---------- */}
-      {!navActive ? (
+      {/* Sidebar */}
+      {!navActive && dataset && gazetteer ? (
         <aside className="sidebar">
           <div className="brand">
             <span className="flag-dot" />
@@ -607,22 +695,28 @@ export function App() {
             <div className="io">
               <span className="pin from">A</span>
               <PlaceInput
-                graph={graph}
+                gazetteer={gazetteer}
                 value={origin}
                 placeholder="Choose starting point"
-                onSelect={setOrigin}
+                onSelect={onSelectPlace(setOrigin)}
                 onClear={() => setOrigin(null)}
                 onUseMyLocation={() => useMyLocation(setOrigin)}
+                saved={saved}
+                recent={recent}
+                onToggleSaved={onToggle}
               />
             </div>
             <div className="io">
               <span className="pin to">B</span>
               <PlaceInput
-                graph={graph}
+                gazetteer={gazetteer}
                 value={destination}
                 placeholder="Choose destination"
-                onSelect={setDestination}
+                onSelect={onSelectPlace(setDestination)}
                 onClear={() => setDestination(null)}
+                saved={saved}
+                recent={recent}
+                onToggleSaved={onToggle}
               />
               <button className="swap" title="Swap" onClick={swap}>
                 ⇅
@@ -631,16 +725,9 @@ export function App() {
 
             <div className="modes">
               {MODES.map((m) => (
-                <button
-                  key={m}
-                  className={mode === m ? "active" : ""}
-                  title={MODE_LABEL[m]}
-                  onClick={() => setMode(m)}
-                >
+                <button key={m} className={mode === m ? "active" : ""} title={MODE_LABEL[m]} onClick={() => setMode(m)}>
                   <span className="ic">{MODE_ICON[m]}</span>
-                  {route && mode === m ? (
-                    <span className="t">{formatDuration(route.timeS)}</span>
-                  ) : null}
+                  {sel && mode === m ? <span className="t">{formatDuration(selTime)}</span> : null}
                 </button>
               ))}
             </div>
@@ -649,21 +736,28 @@ export function App() {
               <button className={metric === "time" ? "active" : ""} onClick={() => setMetric("time")}>
                 Fastest
               </button>
-              <button
-                className={metric === "distance" ? "active" : ""}
-                onClick={() => setMetric("distance")}
-              >
+              <button className={metric === "distance" ? "active" : ""} onClick={() => setMetric("distance")}>
                 Shortest
               </button>
             </div>
 
-            {route ? (
+            {routes.length > 0 ? (
               <div className="summary">
-                <div className="big">
-                  <span className="time">{formatDuration(route.timeS)}</span>
-                  <span className="dist">{formatKm(route.distanceM)}</span>
+                <div className="alts">
+                  {routes.map((r, i) => {
+                    const t = trafficOn && r.trafficTimeS != null ? r.trafficTimeS : r.timeS;
+                    return (
+                      <button key={i} className={`alt ${i === selected ? "active" : ""}`} onClick={() => setSelected(i)}>
+                        <span className="alt-time">{formatDuration(t)}</span>
+                        <span className="alt-meta">
+                          {formatKm(r.distanceM)}
+                          {i === 0 ? " · best" : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="eta">Arrive around {arrivalTime(route.timeS)}</div>
+                <div className="eta">Arrive around {arrivalTime(selTime)}{trafficOn ? " (with traffic)" : ""}</div>
                 <button className="go" onClick={startNav}>
                   ▶ Start navigation
                 </button>
@@ -689,8 +783,10 @@ export function App() {
           </div>
 
           <p className="tagline">
-            {graph.nodeCount} places · {graph.roadCount} road segments · right-click the map for
-            directions
+            {dataset.source === "osm"
+              ? `${dataset.meta?.nodeCount.toLocaleString()} junctions · ${dataset.meta?.edgeCount.toLocaleString()} road segments · OpenStreetMap`
+              : `${dataset.graph.nodeCount} places · ${dataset.graph.roadCount} segments · seed data`}
+            {" · right-click for directions"}
           </p>
         </aside>
       ) : null}

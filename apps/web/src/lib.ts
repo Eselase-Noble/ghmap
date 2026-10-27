@@ -1,5 +1,16 @@
 /** Small presentation helpers and map style config for the web app. */
-import type { CostMode, Graph, Maneuver, NodeId, RouteResult, TravelMode } from "@ghmap/core";
+import {
+  CONGESTION_COLOR,
+  routeGeometry,
+  type CostMode,
+  type Graph,
+  type LatLng,
+  type Maneuver,
+  type NodeId,
+  type RouteResult,
+  type TrafficModel,
+  type TravelMode,
+} from "@ghmap/core";
 
 /** Keyless vector base map (OpenFreeMap). */
 export const BASE_STYLE = "https://tiles.openfreemap.org/styles/liberty";
@@ -24,21 +35,54 @@ export function formatDuration(seconds: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m} min`;
 }
 
-/** Build a GeoJSON LineString for a computed route. */
+/** Build a GeoJSON LineString following a route's real road geometry. */
 export function routeToGeoJSON(
   graph: Graph,
   route: RouteResult,
 ): GeoJSON.Feature<GeoJSON.LineString> {
-  const coords = route.path
-    .map((id: NodeId) => graph.getNode(id)?.location)
-    .filter((l): l is { lat: number; lng: number } => !!l)
-    .map((l) => [l.lng, l.lat] as [number, number]);
+  const coords = routeGeometry(graph, route).map(
+    (l: LatLng) => [l.lng, l.lat] as [number, number],
+  );
   return {
     type: "Feature",
     properties: {},
     geometry: { type: "LineString", coordinates: coords },
   };
 }
+
+/**
+ * Build a GeoJSON FeatureCollection of a route's edges, each coloured by its
+ * current congestion level, for the traffic overlay.
+ */
+export function routeTrafficFeatures(
+  graph: Graph,
+  route: RouteResult,
+  traffic: TrafficModel,
+  date: Date,
+): GeoJSON.FeatureCollection<GeoJSON.LineString> {
+  const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+  for (let i = 0; i < route.path.length - 1; i++) {
+    const edge = graph.edgeBetween(route.path[i]!, route.path[i + 1]!);
+    const a = graph.getNode(route.path[i]!)?.location;
+    const b = graph.getNode(route.path[i + 1]!)?.location;
+    if (!edge || !a || !b) continue;
+    const shape = edge.geometry && edge.geometry.length >= 2 ? edge.geometry : [a, b];
+    features.push({
+      type: "Feature",
+      properties: { color: CONGESTION_COLOR[traffic.level(edge, date)] },
+      geometry: {
+        type: "LineString",
+        coordinates: shape.map((l) => [l.lng, l.lat] as [number, number]),
+      },
+    });
+  }
+  return { type: "FeatureCollection", features };
+}
+
+export const EMPTY_FC: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
 
 export const EMPTY_LINE: GeoJSON.Feature<GeoJSON.LineString> = {
   type: "Feature",

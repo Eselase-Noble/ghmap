@@ -1,52 +1,62 @@
 import { useEffect, useRef, useState } from "react";
-import { searchPlaces, type Graph, type PlaceNode } from "@ghmap/core";
+import type { Gazetteer, GazPlace } from "@ghmap/core";
 
 interface Props {
-  graph: Graph;
+  gazetteer: Gazetteer;
   value: string | null;
   placeholder: string;
   onSelect: (id: string) => void;
   onClear?: () => void;
-  /** Optional "use my location" affordance shown at the top of the dropdown. */
   onUseMyLocation?: () => void;
+  saved?: string[];
+  recent?: string[];
+  onToggleSaved?: (id: string) => void;
 }
 
-/** A search box with live place suggestions, backed by @ghmap/core search. */
+/** A search box with live suggestions, recent searches, and saved places. */
 export function PlaceInput({
-  graph,
+  gazetteer,
   value,
   placeholder,
   onSelect,
   onClear,
   onUseMyLocation,
+  saved = [],
+  recent = [],
+  onToggleSaved,
 }: Props) {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Reflect the externally selected value as the input text.
   useEffect(() => {
-    if (value) setText(graph.getNode(value)?.name ?? "");
+    if (value) setText(gazetteer.get(value)?.name ?? "");
     else setText("");
-  }, [value, graph]);
+  }, [value, gazetteer]);
 
-  // Close on outside click.
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const suggestions: PlaceNode[] = open && text.trim() ? searchPlaces(graph, text, 7) : [];
+  const typing = text.trim().length > 0;
+  const suggestions: GazPlace[] = open
+    ? typing
+      ? gazetteer.search(text, 7)
+      : [...recent, ...saved]
+          .filter((id, i, a) => a.indexOf(id) === i)
+          .map((id) => gazetteer.get(id))
+          .filter((p): p is GazPlace => !!p)
+          .slice(0, 8)
+    : [];
 
-  function choose(node: PlaceNode) {
-    onSelect(node.id);
-    setText(node.name);
+  function choose(place: GazPlace) {
+    onSelect(place.id);
+    setText(place.name);
     setOpen(false);
   }
 
@@ -66,6 +76,8 @@ export function PlaceInput({
       setOpen(false);
     }
   }
+
+  const showRecentHeader = open && !typing && suggestions.length > 0;
 
   return (
     <div className="place-input" ref={boxRef}>
@@ -108,6 +120,7 @@ export function PlaceInput({
               <span className="dot">◎</span> Use my location
             </li>
           ) : null}
+          {showRecentHeader ? <li className="sug-head">Recent &amp; saved</li> : null}
           {suggestions.map((s, i) => (
             <li
               key={s.id}
@@ -115,8 +128,24 @@ export function PlaceInput({
               onMouseEnter={() => setHighlight(i)}
               onMouseDown={() => choose(s)}
             >
-              <span className="name">{s.name}</span>
-              <span className="region">{s.region}</span>
+              <span className="name">
+                {saved.includes(s.id) ? "★ " : ""}
+                {s.name}
+              </span>
+              <span className="region">{s.region ?? s.kind}</span>
+              {onToggleSaved ? (
+                <button
+                  className="star"
+                  title={saved.includes(s.id) ? "Unsave" : "Save"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onToggleSaved(s.id);
+                  }}
+                >
+                  {saved.includes(s.id) ? "★" : "☆"}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

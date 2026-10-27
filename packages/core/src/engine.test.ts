@@ -10,6 +10,8 @@ import { PriorityQueue } from "./priority-queue.ts";
 import { buildGhanaGraph } from "./data/ghana.ts";
 import { aStar, dijkstra } from "./routing.ts";
 import { buildDirections } from "./directions.ts";
+import { alternativeRoutes } from "./alternatives.ts";
+import { TrafficModel } from "./traffic.ts";
 import { planTrip, randomTrip } from "./trip.ts";
 import { searchPlaces } from "./search.ts";
 import { SpatialGrid } from "./spatial-index.ts";
@@ -118,6 +120,36 @@ test("trip simulator tracks position from start to arrival", () => {
 
   // Total time matches the route's time.
   assert.ok(Math.abs(sim.totalTimeS - route.timeS) < 1);
+});
+
+test("traffic slows time-based routing during Accra rush hour", () => {
+  const g = buildGhanaGraph();
+  const model = new TrafficModel(g);
+  const rush = new Date(2026, 0, 6, 8, 0, 0); // Tuesday 08:00
+  const night = new Date(2026, 0, 6, 2, 0, 0); // Tuesday 02:00
+  // A short hop within Greater Accra is exposed to congestion.
+  const rushRoute = aStar(g, "accra", "tema", {
+    metric: "time",
+    traffic: { model, date: rush },
+  })!;
+  const nightRoute = aStar(g, "accra", "tema", {
+    metric: "time",
+    traffic: { model, date: night },
+  })!;
+  assert.ok(rushRoute.trafficTimeS! > rushRoute.timeS, "rush should exceed free-flow");
+  assert.ok(
+    rushRoute.trafficTimeS! > nightRoute.trafficTimeS!,
+    "rush hour should be slower than the middle of the night",
+  );
+});
+
+test("alternative routes returns distinct options", () => {
+  const g = buildGhanaGraph();
+  const alts = alternativeRoutes(g, "accra", "bolgatanga", { count: 3 });
+  assert.ok(alts.length >= 2, "expected at least two routes");
+  // The first is optimal; later ones should differ in their node sequence.
+  const first = alts[0]!.path.join(">");
+  assert.ok(alts.slice(1).some((r) => r.path.join(">") !== first));
 });
 
 test("random trip produces a usable fleet vehicle", () => {

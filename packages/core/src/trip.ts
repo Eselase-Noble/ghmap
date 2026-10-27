@@ -9,10 +9,35 @@
  * the live fleet view.
  */
 import type { LatLng } from "./geo.ts";
-import { bearing } from "./geo.ts";
+import { bearing, haversine } from "./geo.ts";
 import type { Graph, NodeId, TravelMode } from "./graph.ts";
 import { modeSpeedKmh } from "./graph.ts";
 import { aStar, type RouteResult } from "./routing.ts";
+
+/**
+ * The full shape of a route as a dense list of points, following each edge's
+ * real geometry where available (so it traces the actual roads, not straight
+ * lines between junctions). Used for drawing and for the trip simulator.
+ */
+export function routeGeometry(graph: Graph, route: RouteResult): LatLng[] {
+  const pts: LatLng[] = [];
+  for (let i = 0; i < route.path.length - 1; i++) {
+    const edge = graph.edgeBetween(route.path[i]!, route.path[i + 1]!);
+    const a = graph.getNode(route.path[i]!)?.location;
+    const b = graph.getNode(route.path[i + 1]!)?.location;
+    const seg =
+      edge?.geometry && edge.geometry.length >= 2
+        ? edge.geometry
+        : a && b
+          ? [a, b]
+          : [];
+    for (const p of seg) {
+      const last = pts[pts.length - 1];
+      if (!last || last.lat !== p.lat || last.lng !== p.lng) pts.push(p);
+    }
+  }
+  return pts;
+}
 
 export interface TripState {
   position: LatLng;
@@ -45,20 +70,46 @@ export class TripSimulator {
   private readonly cumTimeS: number[] = [0];
 
   constructor(graph: Graph, route: RouteResult, mode: TravelMode = "drive") {
-    this.pts = route.path
-      .map((id) => graph.getNode(id)?.location)
-      .filter((l): l is LatLng => !!l);
-
+    // Build a dense polyline following real road geometry, carrying the speed
+    // of the edge each sub-segment belongs to.
+    this.pts = [];
     for (let i = 0; i < route.path.length - 1; i++) {
       const edge = graph.edgeBetween(route.path[i]!, route.path[i + 1]!);
       if (!edge) continue;
+      const a = graph.getNode(route.path[i]!)?.location;
+      const b = graph.getNode(route.path[i + 1]!)?.location;
+      const shape =
+        edge.geometry && edge.geometry.length >= 2
+          ? edge.geometry
+          : a && b
+            ? [a, b]
+            : [];
+      if (shape.length < 2) continue;
+
+      // Raw sub-segment lengths, then scaled so they sum to the edge's
+      // authoritative length (keeps total distance/time matching the route).
+      const raw: number[] = [];
+      let rawSum = 0;
+      for (let k = 1; k < shape.length; k++) {
+        const d = haversine(shape[k - 1]!, shape[k]!);
+        raw.push(d);
+        rawSum += d;
+      }
+      const scale = rawSum > 0 ? edge.lengthM / rawSum : 1;
       const speed = modeSpeedKmh(mode, edge.roadClass);
-      const dur = edge.lengthM / ((speed * 1000) / 3600);
-      this.segLenM.push(edge.lengthM);
-      this.segSpeedKmh.push(speed);
-      this.segDurS.push(dur);
-      this.cumDistM.push(this.cumDistM[this.cumDistM.length - 1]! + edge.lengthM);
-      this.cumTimeS.push(this.cumTimeS[this.cumTimeS.length - 1]! + dur);
+      const speedMs = (speed * 1000) / 3600;
+
+      if (this.pts.length === 0) this.pts.push(shape[0]!);
+      for (let k = 1; k < shape.length; k++) {
+        this.pts.push(shape[k]!);
+        const segLen = raw[k - 1]! * scale;
+        const dur = segLen / speedMs;
+        this.segLenM.push(segLen);
+        this.segSpeedKmh.push(speed);
+        this.segDurS.push(dur);
+        this.cumDistM.push(this.cumDistM[this.cumDistM.length - 1]! + segLen);
+        this.cumTimeS.push(this.cumTimeS[this.cumTimeS.length - 1]! + dur);
+      }
     }
     this.totalDistanceM = this.cumDistM[this.cumDistM.length - 1]!;
     this.totalTimeS = this.cumTimeS[this.cumTimeS.length - 1]!;

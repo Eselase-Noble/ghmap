@@ -65,6 +65,8 @@ export interface Edge {
   readonly roadClass: RoadClass;
   /** Optional human name of the road, e.g. "N1" or "Accra–Kumasi Road". */
   readonly name?: string;
+  /** Optional shape points from `from` to `to`, for drawing the real road. */
+  readonly geometry?: readonly LatLng[];
 }
 
 /** Travel time across an edge in seconds, for the given mode (default drive). */
@@ -117,7 +119,7 @@ export class Graph {
     from: NodeId,
     to: NodeId,
     roadClass: RoadClass,
-    opts: { lengthM?: number; name?: string } = {},
+    opts: { lengthM?: number; name?: string; geometry?: readonly LatLng[] } = {},
   ): void {
     const a = this.nodes.get(from);
     const b = this.nodes.get(to);
@@ -131,6 +133,7 @@ export class Graph {
       lengthM,
       roadClass,
       ...(opts.name !== undefined ? { name: opts.name } : {}),
+      ...(opts.geometry !== undefined ? { geometry: opts.geometry } : {}),
     };
     this.adjacency.get(from)!.push(edge);
     this.edgeCount++;

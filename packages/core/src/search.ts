@@ -50,6 +50,89 @@ export function searchPlaces(
     .map((r) => r.node);
 }
 
+/** A named place that can be searched and reverse-geocoded. */
+export interface GazPlace {
+  id: string;
+  name: string;
+  kind: string;
+  location: LatLng;
+  region?: string;
+}
+
+/**
+ * A gazetteer: an index of named places supporting autocomplete search,
+ * nearest-place (reverse geocoding), and labels. Works the same whether the
+ * places come from the hand-built seed data or the imported OSM network, so the
+ * app's search box doesn't care which backend is loaded.
+ */
+export class Gazetteer {
+  private readonly places: GazPlace[];
+  private readonly byId = new Map<string, GazPlace>();
+  private readonly grid = new SpatialGrid<{ id: string; location: LatLng }>();
+
+  constructor(places: GazPlace[]) {
+    this.places = places;
+    for (const p of places) {
+      this.byId.set(p.id, p);
+      this.grid.insert({ id: p.id, location: p.location });
+    }
+  }
+
+  get size(): number {
+    return this.places.length;
+  }
+
+  get(id: string): GazPlace | undefined {
+    return this.byId.get(id);
+  }
+
+  /** Ranked autocomplete search (exact > prefix > substring; bigger places win). */
+  search(query: string, limit = 8): GazPlace[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const scored: { place: GazPlace; score: number }[] = [];
+    for (const p of this.places) {
+      const name = p.name.toLowerCase();
+      const region = (p.region ?? "").toLowerCase();
+      let score: number;
+      if (name === q) score = 0;
+      else if (name.startsWith(q)) score = 1;
+      else if (name.includes(q)) score = 2;
+      else if (region.startsWith(q)) score = 3;
+      else if (region.includes(q)) score = 4;
+      else continue;
+      const bonus =
+        p.kind === "capital" || p.kind === "city"
+          ? -0.3
+          : p.kind === "town"
+            ? -0.15
+            : 0;
+      scored.push({ place: p, score: score + bonus });
+    }
+    return scored
+      .sort((a, b) => a.score - b.score || a.place.name.localeCompare(b.place.name))
+      .slice(0, limit)
+      .map((s) => s.place);
+  }
+
+  /** Nearest named place to a point, with distance in metres. */
+  nearest(point: LatLng): { place: GazPlace; distanceM: number } | null {
+    const hit = this.grid.nearest(point);
+    if (!hit) return null;
+    const place = this.byId.get(hit.id);
+    if (!place) return null;
+    return { place, distanceM: haversine(point, place.location) };
+  }
+
+  /** A short "near X" style label for a point. */
+  label(point: LatLng): string {
+    const hit = this.nearest(point);
+    if (!hit) return `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`;
+    const km = hit.distanceM / 1000;
+    return km < 1.5 ? hit.place.name : `${km.toFixed(0)} km from ${hit.place.name}`;
+  }
+}
+
 /** A reusable reverse-geocoder built from the graph's places. */
 export class ReverseGeocoder {
   private readonly grid: SpatialGrid<{ id: string; location: LatLng }>;
