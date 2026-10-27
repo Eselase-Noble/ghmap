@@ -10,6 +10,7 @@ import { PriorityQueue } from "./priority-queue.ts";
 import { buildGhanaGraph } from "./data/ghana.ts";
 import { aStar, dijkstra } from "./routing.ts";
 import { buildDirections } from "./directions.ts";
+import { planTrip, randomTrip } from "./trip.ts";
 import { searchPlaces } from "./search.ts";
 import { SpatialGrid } from "./spatial-index.ts";
 import { buildConstellation, simulateFix } from "./satellite.ts";
@@ -88,6 +89,48 @@ test("search ranks exact and prefix matches first", () => {
   const results = searchPlaces(g, "kum");
   assert.ok(results.length > 0);
   assert.equal(results[0]!.id, "kumasi");
+});
+
+test("trip simulator tracks position from start to arrival", () => {
+  const g = buildGhanaGraph();
+  const planned = planTrip(g, "accra", "kumasi", "drive");
+  assert.ok(planned, "expected a planned trip");
+  const { route, sim } = planned!;
+
+  // At t=0 we're at the origin, not arrived.
+  const start = sim.stateAt(0);
+  const origin = g.getNode("accra")!.location;
+  assert.ok(Math.abs(start.position.lat - origin.lat) < 1e-6);
+  assert.equal(start.arrived, false);
+  assert.ok(start.speedKmh > 0);
+
+  // Halfway in time we're partway along and moving.
+  const mid = sim.stateAt(sim.totalTimeS / 2);
+  assert.ok(mid.progress > 0 && mid.progress < 1);
+  assert.ok(mid.distanceRemainingM < sim.totalDistanceM);
+
+  // Past the end we've arrived at the destination.
+  const end = sim.stateAt(sim.totalTimeS + 10);
+  assert.equal(end.arrived, true);
+  const dest = g.getNode("kumasi")!.location;
+  assert.ok(Math.abs(end.position.lat - dest.lat) < 1e-6);
+  assert.ok(Math.abs(end.position.lng - dest.lng) < 1e-6);
+
+  // Total time matches the route's time.
+  assert.ok(Math.abs(sim.totalTimeS - route.timeS) < 1);
+});
+
+test("random trip produces a usable fleet vehicle", () => {
+  const g = buildGhanaGraph();
+  let seed = 123;
+  const rng = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const trip = randomTrip(g, rng);
+  assert.ok(trip, "expected a random trip");
+  assert.notEqual(trip!.origin, trip!.destination);
+  assert.ok(trip!.sim.totalDistanceM > 0);
 });
 
 test("spatial grid nearest matches a brute-force scan", () => {

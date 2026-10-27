@@ -192,17 +192,38 @@ select:focus {
 }
 
 /* ---------- Map controls ---------- */
-.layer-toggle {
+.top-controls {
   position: absolute;
   top: 16px;
   right: 16px;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.layer-toggle {
   display: flex;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   backdrop-filter: blur(14px);
+}
+.fleet-btn {
+  width: auto;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  color: var(--text);
+}
+.fleet-btn.active {
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+  color: #fff;
 }
 .layer-toggle button {
   width: auto;
@@ -490,6 +511,175 @@ select:focus {
   background: #1a73e8;
   border: 3px solid #fff;
   box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.35);
+}
+.nav-marker {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #1a73e8;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 5px rgba(26, 115, 232, 0.3);
+}
+
+/* Live fleet vehicles */
+.veh {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+.veh-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 16px solid var(--gh-gold);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+  transform-origin: 50% 65%;
+}
+
+/* ---------- Navigation overlay ---------- */
+.nav-top {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--gh-green);
+  color: #fff;
+  border-radius: 14px;
+  padding: 14px 18px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+.nav-maneuver {
+  font-size: 34px;
+  line-height: 1;
+}
+.nav-instruction .nav-dist {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.nav-instruction .nav-next {
+  font-size: 14px;
+  opacity: 0.92;
+}
+
+.nav-bottom {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(620px, calc(100vw - 32px));
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 18px 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    "eta dials actions"
+    "progress progress progress";
+  gap: 12px 18px;
+  align-items: center;
+}
+.nav-eta {
+  grid-area: eta;
+  display: flex;
+  flex-direction: column;
+}
+.nav-eta .eta-time {
+  font-size: 26px;
+  font-weight: 800;
+  color: #4ade80;
+  letter-spacing: -0.02em;
+}
+.nav-eta .eta-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.nav-dials {
+  grid-area: dials;
+  display: flex;
+  gap: 14px;
+}
+.nav-dials .dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.nav-dials .dv {
+  font-size: 18px;
+  font-weight: 700;
+}
+.nav-dials .dv.good {
+  color: #4ade80;
+}
+.nav-dials .dk {
+  font-size: 10.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.nav-actions {
+  grid-area: actions;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.nav-actions .speedlbl {
+  font-size: 10.5px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 0;
+}
+.nav-actions input[type="range"] {
+  width: 120px;
+  accent-color: var(--gh-gold);
+}
+.nav-stop {
+  width: auto;
+  background: var(--gh-red);
+  border-color: var(--gh-red);
+  color: #fff;
+  font-weight: 700;
+  padding: 8px 20px;
+  cursor: pointer;
+}
+.nav-progress {
+  grid-area: progress;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.nav-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--gh-gold), var(--gh-green));
+  transition: width 0.3s ease;
+}
+
+.go {
+  margin-top: 12px;
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 11px;
+}
+.go:hover {
+  filter: brightness(1.1);
 }
 
 .maplibregl-popup-content {
