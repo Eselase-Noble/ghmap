@@ -8,6 +8,8 @@
  */
 import { buildGhanaGraph } from "./data/ghana.ts";
 import { aStar, dijkstra } from "./routing.ts";
+import { buildDirections } from "./directions.ts";
+import { searchPlaces } from "./search.ts";
 import { SpatialGrid } from "./spatial-index.ts";
 import {
   buildConstellation,
@@ -33,25 +35,44 @@ const dest = "bolgatanga";
 const nameOf = (id: string) => graph.getNode(id)?.name ?? id;
 
 console.log(`--- Route: ${nameOf(origin)} → ${nameOf(dest)} ---`);
-for (const mode of ["time", "distance"] as const) {
-  const r = aStar(graph, origin, dest, mode);
+for (const metric of ["time", "distance"] as const) {
+  const r = aStar(graph, origin, dest, { metric });
   if (!r) {
-    console.log(`  (${mode}) no route found`);
+    console.log(`  (${metric}) no route found`);
     continue;
   }
   console.log(
-    `  A* by ${mode}: ${km(r.distanceM)}, ${mins(r.timeS)} via ` +
+    `  A* by ${metric}: ${km(r.distanceM)}, ${mins(r.timeS)} via ` +
       r.path.map(nameOf).join(" → "),
   );
 }
 
 // Confirm A* and Dijkstra agree on cost but A* explores fewer nodes.
-const d = dijkstra(graph, origin, dest, "time")!;
-const a = aStar(graph, origin, dest, "time")!;
+const d = dijkstra(graph, origin, dest, { metric: "time" })!;
+const a = aStar(graph, origin, dest, { metric: "time" })!;
 console.log(
   `\n  Optimality check: Dijkstra ${mins(d.timeS)} (explored ${d.nodesExplored}) ` +
     `vs A* ${mins(a.timeS)} (explored ${a.nodesExplored})`,
 );
+
+// Travel modes change the time but not the path.
+console.log("\n--- Travel modes (Accra → Kumasi) ---");
+for (const m of ["drive", "cycle", "walk"] as const) {
+  const r = aStar(graph, "accra", "kumasi", { metric: "time", mode: m });
+  if (r) console.log(`  ${m.padEnd(6)} ${km(r.distanceM)} in ${mins(r.timeS)}`);
+}
+
+// Turn-by-turn directions for the fastest Accra → Kumasi drive.
+console.log("\n--- Turn-by-turn (Accra → Kumasi) ---");
+const drive = aStar(graph, "accra", "kumasi", { metric: "time" })!;
+for (const step of buildDirections(graph, drive)) {
+  const dist = step.distanceM > 0 ? ` (${km(step.distanceM)})` : "";
+  console.log(`  • ${step.instruction}${dist}`);
+}
+
+// Search / autocomplete.
+console.log("\n--- Search 'kum' ---");
+console.log("  " + searchPlaces(graph, "kum").map((n) => n.name).join(", "));
 
 // --- Spatial index: nearest city to an arbitrary coordinate ---
 console.log("\n--- Nearest-place search ---");

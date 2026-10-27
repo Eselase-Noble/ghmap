@@ -1,57 +1,77 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   aStar,
   dijkstra,
   buildConstellation,
+  buildDirections,
   buildGhanaGraph,
+  ReverseGeocoder,
   simulateFix,
   type CostMode,
+  type DirectionStep,
   type RouteResult,
+  type TravelMode,
 } from "@ghmap/core";
+import { PlaceInput } from "./PlaceInput.tsx";
 import {
   BASE_STYLE,
   EMPTY_LINE,
   GHANA_BOUNDS,
   GHANA_CENTER,
+  MANEUVER_ICON,
+  MODE_ICON,
+  MODE_LABEL,
   SATELLITE_TILES,
+  arrivalTime,
   formatDuration,
   formatKm,
+  readUrlState,
   routeToGeoJSON,
+  writeUrlState,
 } from "./lib.ts";
 
 type Layer = "streets" | "satellite";
+type Menu = { x: number; y: number; lng: number; lat: number; label: string } | null;
 
 interface GpsResult {
-  lat: number;
-  lng: number;
   errorM: number;
   gdop: number;
-  visible: { id: string; elevationDeg: number }[];
+  visible: number;
   clockBiasKm: number;
 }
+
+const MODES: TravelMode[] = ["drive", "cycle", "walk"];
 
 export function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const meMarker = useRef<maplibregl.Marker | null>(null);
+
   const graph = useMemo(() => buildGhanaGraph(), []);
   const constellation = useMemo(() => buildConstellation(), []);
-  const cities = useMemo(
-    () => graph.nodeList().slice().sort((a, b) => a.name.localeCompare(b.name)),
-    [graph],
-  );
+  const geocoder = useMemo(() => new ReverseGeocoder(graph), [graph]);
 
+  const initial = useMemo(() => readUrlState(), []);
   const [ready, setReady] = useState(false);
-  const [layer, setLayer] = useState<Layer>("streets");
-  const [origin, setOrigin] = useState("accra");
-  const [destination, setDestination] = useState("tamale");
-  const [costMode, setCostMode] = useState<CostMode>("time");
-  const [route, setRoute] = useState<RouteResult | null>(null);
-  const [exploredNote, setExploredNote] = useState<string>("");
+  const [layer, setLayer] = useState<Layer>(initial.view ?? "streets");
+  const [origin, setOrigin] = useState<string | null>(initial.origin ?? "accra");
+  const [destination, setDestination] = useState<string | null>(
+    initial.destination ?? "kumasi",
+  );
+  const [mode, setMode] = useState<TravelMode>(initial.mode ?? "drive");
+  const [metric, setMetric] = useState<CostMode>(initial.metric ?? "time");
 
-  const [gpsPlace, setGpsPlace] = useState("kumasi");
+  const [route, setRoute] = useState<RouteResult | null>(null);
+  const [steps, setSteps] = useState<DirectionStep[]>([]);
+  const [note, setNote] = useState("");
+  const [showSteps, setShowSteps] = useState(false);
+
+  const [menu, setMenu] = useState<Menu>(null);
   const [gps, setGps] = useState<GpsResult | null>(null);
+  const [showGps, setShowGps] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // --- Initialise the map once ---
   useEffect(() => {
@@ -65,13 +85,13 @@ export function App() {
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+    map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
     map.setMaxBounds([
       [GHANA_BOUNDS[0][0] - 2, GHANA_BOUNDS[0][1] - 2],
       [GHANA_BOUNDS[1][0] + 2, GHANA_BOUNDS[1][1] + 2],
     ]);
 
     map.on("load", () => {
-      // Satellite raster overlay (hidden until toggled).
       map.addSource("satellite", {
         type: "raster",
         tiles: [SATELLITE_TILES],
@@ -85,7 +105,6 @@ export function App() {
         layout: { visibility: "none" },
       });
 
-      // Route line.
       map.addSource("route", { type: "geojson", data: EMPTY_LINE });
       map.addLayer({
         id: "route-casing",
@@ -102,19 +121,16 @@ export function App() {
         paint: { "line-color": "#ce1126", "line-width": 4.5 },
       });
 
-      // City markers.
       for (const city of graph.nodeList()) {
         const el = document.createElement("div");
-        const isCapital = city.kind === "capital" || city.kind === "city";
-        el.style.cssText = `width:${isCapital ? 12 : 8}px;height:${
-          isCapital ? 12 : 8
-        }px;border-radius:50%;background:${
-          isCapital ? "#fcd116" : "#ffffff"
-        };border:2px solid #006b3f;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.3)`;
+        const big = city.kind === "capital" || city.kind === "city";
+        el.className = "city-marker";
+        el.style.cssText = `width:${big ? 12 : 8}px;height:${big ? 12 : 8}px;background:${
+          big ? "#fcd116" : "#ffffff"
+        }`;
         el.title = city.name;
         el.addEventListener("click", (e) => {
           e.stopPropagation();
-          // Click a marker to set it as the destination.
           setDestination(city.id);
         });
         new maplibregl.Marker({ element: el })
@@ -130,13 +146,27 @@ export function App() {
       setReady(true);
     });
 
+    // Right-click: offer directions from/to this point.
+    map.on("contextmenu", (e) => {
+      const label = geocoder.label({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      setMenu({
+        x: e.point.x,
+        y: e.point.y,
+        lng: e.lngLat.lng,
+        lat: e.lngLat.lat,
+        label,
+      });
+    });
+    map.on("click", () => setMenu(null));
+    map.on("movestart", () => setMenu(null));
+
     return () => {
       map.remove();
       mapRef.current = null;
     };
-  }, [graph]);
+  }, [graph, geocoder]);
 
-  // --- Toggle satellite layer ---
+  // --- Satellite layer toggle ---
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -147,27 +177,35 @@ export function App() {
     );
   }, [layer, ready]);
 
-  // --- Compute route whenever inputs change ---
+  // --- Compute the route whenever inputs change ---
   useEffect(() => {
-    if (origin === destination) {
+    if (!origin || !destination || origin === destination) {
       setRoute(null);
-      setExploredNote("Pick two different places.");
+      setSteps([]);
+      setNote(origin === destination ? "Choose two different places." : "");
       return;
     }
-    const r = aStar(graph, origin, destination, costMode);
+    const r = aStar(graph, origin, destination, { metric, mode });
     setRoute(r);
     if (r) {
-      const d = dijkstra(graph, origin, destination, costMode);
-      setExploredNote(
+      setSteps(buildDirections(graph, r, mode));
+      const d = dijkstra(graph, origin, destination, { metric, mode });
+      setNote(
         `A* settled ${r.nodesExplored} nodes` +
-          (d ? ` vs Dijkstra ${d.nodesExplored}` : ""),
+          (d ? `, Dijkstra ${d.nodesExplored}` : ""),
       );
     } else {
-      setExploredNote("No route found.");
+      setSteps([]);
+      setNote("No route found.");
     }
-  }, [graph, origin, destination, costMode]);
+  }, [graph, origin, destination, metric, mode]);
 
-  // --- Draw route on the map ---
+  // --- Reflect state into the URL for sharing ---
+  useEffect(() => {
+    writeUrlState({ origin, destination, mode, metric, view: layer });
+  }, [origin, destination, mode, metric, layer]);
+
+  // --- Draw / fit the route ---
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
@@ -188,37 +226,78 @@ export function App() {
           coords[0] as [number, number],
         ),
       );
-      map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 380, right: 80 } });
+      map.fitBounds(bounds, {
+        padding: { top: 90, bottom: 90, left: 400, right: 90 },
+      });
     }
   }, [route, graph, ready]);
 
+  // --- "Use my location" via the browser Geolocation API ---
+  const useMyLocation = useCallback(
+    (assign: (id: string) => void) => {
+      if (!navigator.geolocation) {
+        setNote("Geolocation isn't available in this browser.");
+        return;
+      }
+      setNote("Locating you…");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          const hit = geocoder.nearest(here);
+          const map = mapRef.current;
+          if (map) {
+            if (!meMarker.current) {
+              const el = document.createElement("div");
+              el.className = "me-marker";
+              meMarker.current = new maplibregl.Marker({ element: el });
+            }
+            meMarker.current.setLngLat([here.lng, here.lat]).addTo(map);
+            map.flyTo({ center: [here.lng, here.lat], zoom: 10 });
+          }
+          if (hit) {
+            assign(hit.node.id);
+            setNote(`You're near ${hit.node.name}.`);
+          } else {
+            setNote("You appear to be outside Ghana.");
+          }
+        },
+        () => setNote("Couldn't get your location (permission denied?)."),
+        { enableHighAccuracy: true, timeout: 8000 },
+      );
+    },
+    [geocoder],
+  );
+
   function runGpsSim() {
-    const place = graph.getNode(gpsPlace);
-    if (!place) return;
-    const t = 1200; // a fixed simulation epoch
+    const node = destination ? graph.getNode(destination) : null;
+    const target = node ?? graph.getNode("kumasi")!;
     const { fix, visible, errorM } = simulateFix(
       constellation,
-      place.location,
-      t,
+      target.location,
+      1200,
       { clockBiasM: 60_000, noiseM: 6 },
     );
-    if (!fix) {
-      setGps(null);
-      return;
-    }
+    if (!fix) return setGps(null);
     setGps({
-      lat: fix.position.lat,
-      lng: fix.position.lng,
       errorM: errorM ?? 0,
       gdop: fix.gdop,
+      visible: visible.length,
       clockBiasKm: fix.clockBiasM / 1000,
-      visible: visible
-        .slice()
-        .sort((a, b) => b.elevationDeg - a.elevationDeg)
-        .map((s) => ({ id: s.id, elevationDeg: s.elevationDeg })),
     });
     const map = mapRef.current;
-    if (map) map.flyTo({ center: [place.location.lng, place.location.lat], zoom: 11 });
+    if (map) map.flyTo({ center: [target.location.lng, target.location.lat], zoom: 11 });
+  }
+
+  function share() {
+    navigator.clipboard?.writeText(window.location.href).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  }
+
+  function swap() {
+    setOrigin(destination);
+    setDestination(origin);
   }
 
   const nameOf = (id: string) => graph.getNode(id)?.name ?? id;
@@ -242,137 +321,172 @@ export function App() {
         </button>
       </div>
 
+      {/* Right-click context menu */}
+      {menu ? (
+        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }}>
+          <div className="ctx-label">{menu.label}</div>
+          <button
+            onMouseDown={() => {
+              const hit = geocoder.nearest({ lat: menu.lat, lng: menu.lng });
+              if (hit) setOrigin(hit.node.id);
+              setMenu(null);
+            }}
+          >
+            Directions from here
+          </button>
+          <button
+            onMouseDown={() => {
+              const hit = geocoder.nearest({ lat: menu.lat, lng: menu.lng });
+              if (hit) setDestination(hit.node.id);
+              setMenu(null);
+            }}
+          >
+            Directions to here
+          </button>
+        </div>
+      ) : null}
+
       <aside className="sidebar">
         <div className="brand">
           <span className="flag-dot" />
           <h1>GhMap</h1>
+          <button className="share" onClick={share} title="Copy shareable link">
+            {copied ? "Copied!" : "Share"}
+          </button>
         </div>
-        <p className="tagline">
-          Routing & GPS for Ghana — {graph.nodeCount} places, {graph.roadCount}{" "}
-          road segments.
-        </p>
 
-        {/* Routing */}
         <div className="card">
-          <h2>Directions</h2>
+          <div className="io">
+            <span className="pin from">A</span>
+            <PlaceInput
+              graph={graph}
+              value={origin}
+              placeholder="Choose starting point"
+              onSelect={setOrigin}
+              onClear={() => setOrigin(null)}
+              onUseMyLocation={() => useMyLocation(setOrigin)}
+            />
+          </div>
+          <div className="io">
+            <span className="pin to">B</span>
+            <PlaceInput
+              graph={graph}
+              value={destination}
+              placeholder="Choose destination"
+              onSelect={setDestination}
+              onClear={() => setDestination(null)}
+            />
+            <button className="swap" title="Swap" onClick={swap}>
+              ⇅
+            </button>
+          </div>
 
-          <label htmlFor="origin">From</label>
-          <select
-            id="origin"
-            value={origin}
-            onChange={(e) => setOrigin(e.target.value)}
-          >
-            {cities.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
+          <div className="modes">
+            {MODES.map((m) => (
+              <button
+                key={m}
+                className={mode === m ? "active" : ""}
+                title={MODE_LABEL[m]}
+                onClick={() => setMode(m)}
+              >
+                <span className="ic">{MODE_ICON[m]}</span>
+                {route && mode === m ? (
+                  <span className="t">{formatDuration(route.timeS)}</span>
+                ) : null}
+              </button>
             ))}
-          </select>
+          </div>
 
-          <label htmlFor="destination">To</label>
-          <select
-            id="destination"
-            value={destination}
-            onChange={(e) => setDestination(e.target.value)}
-          >
-            {cities.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-
-          <label>Optimise for</label>
           <div className="seg">
             <button
-              className={costMode === "time" ? "active" : ""}
-              onClick={() => setCostMode("time")}
+              className={metric === "time" ? "active" : ""}
+              onClick={() => setMetric("time")}
             >
               Fastest
             </button>
             <button
-              className={costMode === "distance" ? "active" : ""}
-              onClick={() => setCostMode("distance")}
+              className={metric === "distance" ? "active" : ""}
+              onClick={() => setMetric("distance")}
             >
               Shortest
             </button>
           </div>
 
           {route ? (
+            <div className="summary">
+              <div className="big">
+                <span className="time">{formatDuration(route.timeS)}</span>
+                <span className="dist">{formatKm(route.distanceM)}</span>
+              </div>
+              <div className="eta">Arrive around {arrivalTime(route.timeS)}</div>
+              <button
+                className="steps-toggle"
+                onClick={() => setShowSteps((s) => !s)}
+              >
+                {showSteps ? "Hide steps" : `Show ${steps.length} steps`}
+              </button>
+              {showSteps ? (
+                <ol className="steps">
+                  {steps.map((s, i) => (
+                    <li key={i}>
+                      <span className="mic">{MANEUVER_ICON[s.maneuver]}</span>
+                      <span className="itxt">
+                        {s.instruction}
+                        {s.distanceM > 0 ? (
+                          <em> · {formatKm(s.distanceM)}</em>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </div>
+          ) : null}
+          {note ? <div className="hint">{note}</div> : null}
+        </div>
+
+        {/* GPS simulation (secondary) */}
+        <div className="card">
+          <button className="accordion" onClick={() => setShowGps((s) => !s)}>
+            🛰️ Simulated GPS fix {showGps ? "▾" : "▸"}
+          </button>
+          {showGps ? (
             <>
-              <div className="result">
-                <div className="stat">
-                  <div className="k">Distance</div>
-                  <div className="v">{formatKm(route.distanceM)}</div>
+              <p className="hint">
+                Acquires the satellites above {destination ? nameOf(destination) : "Kumasi"} and
+                solves its position by least-squares trilateration.
+              </p>
+              <button className="btn-primary" onClick={runGpsSim}>
+                Acquire & solve
+              </button>
+              {gps ? (
+                <div className="result">
+                  <div className="stat">
+                    <div className="k">Error</div>
+                    <div className="v good">{gps.errorM.toFixed(1)} m</div>
+                  </div>
+                  <div className="stat">
+                    <div className="k">GDOP</div>
+                    <div className="v">{gps.gdop.toFixed(2)}</div>
+                  </div>
+                  <div className="stat">
+                    <div className="k">Satellites</div>
+                    <div className="v">{gps.visible}</div>
+                  </div>
+                  <div className="stat">
+                    <div className="k">Clock bias</div>
+                    <div className="v">{gps.clockBiasKm.toFixed(1)} km</div>
+                  </div>
                 </div>
-                <div className="stat">
-                  <div className="k">Travel time</div>
-                  <div className="v">{formatDuration(route.timeS)}</div>
-                </div>
-              </div>
-              <div className="path">
-                {route.path.map(nameOf).join("  →  ")}
-              </div>
+              ) : null}
             </>
           ) : null}
-          <div className="hint">{exploredNote}</div>
         </div>
 
-        {/* GPS simulation */}
-        <div className="card">
-          <h2>Simulated GPS fix</h2>
-          <label htmlFor="gpsPlace">Receiver location</label>
-          <select
-            id="gpsPlace"
-            value={gpsPlace}
-            onChange={(e) => setGpsPlace(e.target.value)}
-          >
-            {cities.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <button className="btn-primary" onClick={runGpsSim}>
-            Acquire satellites & solve position
-          </button>
-
-          {gps ? (
-            <>
-              <div className="result">
-                <div className="stat">
-                  <div className="k">Position error</div>
-                  <div className="v good">{gps.errorM.toFixed(1)} m</div>
-                </div>
-                <div className="stat">
-                  <div className="k">GDOP</div>
-                  <div className="v">{gps.gdop.toFixed(2)}</div>
-                </div>
-                <div className="stat">
-                  <div className="k">Satellites</div>
-                  <div className="v">{gps.visible.length}</div>
-                </div>
-                <div className="stat">
-                  <div className="k">Clock bias</div>
-                  <div className="v">{gps.clockBiasKm.toFixed(1)} km</div>
-                </div>
-              </div>
-              <div className="sat-list">
-                {gps.visible.map((s) => (
-                  <div className="sat" key={s.id}>
-                    <span>{s.id}</span>
-                    <span>{s.elevationDeg.toFixed(0)}° elev</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="hint">
-              Solves lat/lng & clock bias from the satellites above the horizon
-              using least-squares trilateration — real GPS math.
-            </div>
-          )}
-        </div>
+        <p className="tagline">
+          {graph.nodeCount} places · {graph.roadCount} road segments · right-click
+          the map for directions
+        </p>
       </aside>
     </div>
   );

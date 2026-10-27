@@ -32,6 +32,22 @@ export const ROAD_SPEED_KMH: Record<RoadClass, number> = {
   track: 20,
 };
 
+/** How a traveller moves, which changes the effective speed on each road. */
+export type TravelMode = "drive" | "walk" | "cycle";
+
+/** Effective speed (km/h) for a mode on a given road class. */
+export function modeSpeedKmh(mode: TravelMode, roadClass: RoadClass): number {
+  switch (mode) {
+    case "walk":
+      return 5;
+    case "cycle":
+      return 15;
+    case "drive":
+    default:
+      return ROAD_SPEED_KMH[roadClass];
+  }
+}
+
 export interface PlaceNode {
   readonly id: NodeId;
   readonly name: string;
@@ -51,9 +67,9 @@ export interface Edge {
   readonly name?: string;
 }
 
-/** Travel time across an edge in seconds, from its length and road class. */
-export function edgeTravelSeconds(edge: Edge): number {
-  const speedMs = (ROAD_SPEED_KMH[edge.roadClass] * 1000) / 3600;
+/** Travel time across an edge in seconds, for the given mode (default drive). */
+export function edgeTravelSeconds(edge: Edge, mode: TravelMode = "drive"): number {
+  const speedMs = (modeSpeedKmh(mode, edge.roadClass) * 1000) / 3600;
   return edge.lengthM / speedMs;
 }
 
@@ -85,6 +101,15 @@ export class Graph {
 
   neighbors(id: NodeId): readonly Edge[] {
     return this.adjacency.get(id) ?? [];
+  }
+
+  /** The edge actually travelled from `from` to `to` (shortest if several). */
+  edgeBetween(from: NodeId, to: NodeId): Edge | undefined {
+    let best: Edge | undefined;
+    for (const edge of this.neighbors(from)) {
+      if (edge.to === to && (!best || edge.lengthM < best.lengthM)) best = edge;
+    }
+    return best;
   }
 
   /** Add a single directed edge. Length defaults to the great-circle distance. */

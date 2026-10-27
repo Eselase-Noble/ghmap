@@ -9,6 +9,8 @@ import { haversine, toECEF, fromECEF } from "./geo.ts";
 import { PriorityQueue } from "./priority-queue.ts";
 import { buildGhanaGraph } from "./data/ghana.ts";
 import { aStar, dijkstra } from "./routing.ts";
+import { buildDirections } from "./directions.ts";
+import { searchPlaces } from "./search.ts";
 import { SpatialGrid } from "./spatial-index.ts";
 import { buildConstellation, simulateFix } from "./satellite.ts";
 
@@ -40,7 +42,7 @@ test("priority queue pops in ascending priority and supports decreaseKey", () =>
 
 test("Ghana graph is connected enough to route corner-to-corner", () => {
   const g = buildGhanaGraph();
-  const r = aStar(g, "aflao", "lawra", "time");
+  const r = aStar(g, "aflao", "lawra", { metric: "time" });
   assert.ok(r, "expected a route from Aflao to Lawra");
   assert.ok(r!.path[0] === "aflao" && r!.path.at(-1) === "lawra");
   assert.ok(r!.distanceM > 0 && r!.timeS > 0);
@@ -54,10 +56,38 @@ test("A* returns the same optimal cost as Dijkstra", () => {
     ["wa", "aflao"],
   ];
   for (const [from, to] of pairs) {
-    const d = dijkstra(g, from, to, "time")!;
-    const a = aStar(g, from, to, "time")!;
+    const d = dijkstra(g, from, to, { metric: "time" })!;
+    const a = aStar(g, from, to, { metric: "time" })!;
     assert.ok(Math.abs(d.timeS - a.timeS) < 1, `${from}->${to} costs differ`);
   }
+});
+
+test("travel modes: same path by distance, far slower on foot by time", () => {
+  const g = buildGhanaGraph();
+  // Distance is independent of mode, so the shortest-distance path matches.
+  const driveD = aStar(g, "accra", "kumasi", { metric: "distance", mode: "drive" })!;
+  const walkD = aStar(g, "accra", "kumasi", { metric: "distance", mode: "walk" })!;
+  assert.deepEqual(driveD.path, walkD.path);
+  // By time, walking is many times slower than driving.
+  const driveT = aStar(g, "accra", "kumasi", { metric: "time", mode: "drive" })!;
+  const walkT = aStar(g, "accra", "kumasi", { metric: "time", mode: "walk" })!;
+  assert.ok(walkT.timeS > driveT.timeS * 5, "walking should be far slower");
+});
+
+test("turn-by-turn directions start at origin and end at arrival", () => {
+  const g = buildGhanaGraph();
+  const r = aStar(g, "accra", "kumasi", { metric: "time" })!;
+  const steps = buildDirections(g, r);
+  assert.ok(steps.length >= 2);
+  assert.equal(steps[0]!.maneuver, "depart");
+  assert.equal(steps.at(-1)!.maneuver, "arrive");
+});
+
+test("search ranks exact and prefix matches first", () => {
+  const g = buildGhanaGraph();
+  const results = searchPlaces(g, "kum");
+  assert.ok(results.length > 0);
+  assert.equal(results[0]!.id, "kumasi");
 });
 
 test("spatial grid nearest matches a brute-force scan", () => {

@@ -233,6 +233,265 @@ select:focus {
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+/* ---------- Brand / share ---------- */
+.brand .share {
+  width: auto;
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* ---------- From / To inputs ---------- */
+.io {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pin {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.pin.from {
+  background: var(--gh-green);
+}
+.pin.to {
+  background: var(--gh-red);
+}
+.swap {
+  width: auto;
+  flex: none;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: #121d2e;
+}
+
+.place-input {
+  position: relative;
+  flex: 1;
+}
+.place-input input {
+  width: 100%;
+  font: inherit;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #121d2e;
+  color: var(--text);
+  padding: 9px 28px 9px 11px;
+}
+.place-input input:focus {
+  outline: 2px solid var(--gh-gold);
+}
+.place-input .clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+.suggestions {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #0d1522;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.suggestion {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.suggestion.active,
+.suggestion:hover {
+  background: var(--panel-soft);
+}
+.suggestion .name {
+  font-weight: 600;
+}
+.suggestion .region {
+  font-size: 11px;
+  color: var(--muted);
+}
+.suggestion.mylocation {
+  color: var(--gh-gold);
+  font-weight: 600;
+}
+.suggestion.mylocation .dot {
+  margin-right: 6px;
+}
+
+/* ---------- Mode switcher ---------- */
+.modes {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 2px;
+}
+.modes button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  cursor: pointer;
+  background: #121d2e;
+}
+.modes button.active {
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+}
+.modes .ic {
+  font-size: 18px;
+}
+.modes .t {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---------- Route summary ---------- */
+.summary {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.summary .big {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.summary .time {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--gh-gold);
+  letter-spacing: -0.02em;
+}
+.summary .dist {
+  font-size: 15px;
+  color: var(--muted);
+}
+.summary .eta {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.steps-toggle {
+  margin-top: 10px;
+  background: #121d2e;
+  cursor: pointer;
+  font-size: 13px;
+}
+.steps {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.steps li {
+  display: flex;
+  gap: 9px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.steps .mic {
+  flex: none;
+}
+.steps em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+/* ---------- Accordion (GPS) ---------- */
+.accordion {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* ---------- Context menu ---------- */
+.ctx-menu {
+  position: absolute;
+  z-index: 40;
+  background: #0d1522;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  min-width: 190px;
+}
+.ctx-label {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.ctx-menu button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ctx-menu button:hover {
+  background: var(--panel-soft);
+}
+
+/* ---------- Markers ---------- */
+.city-marker {
+  border-radius: 50%;
+  border: 2px solid #006b3f;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+.me-marker {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1a73e8;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.35);
+}
+
 .maplibregl-popup-content {
   background: var(--ink);
   color: var(--text);
