@@ -1,83 +1,76 @@
-# 🇬🇭 GhMap
+# GhMap
 
-**An open-source map of Ghana** — routing, spatial search, and a *simulated GPS
-satellite positioning engine* — built from the data structures up.
+A map of Ghana. The idea is simple: build something like Google Maps but focused
+only on Ghana, and actually understand how it works underneath instead of just
+calling someone else's API for the hard parts.
 
-GhMap is a Google-Maps-style map dedicated entirely to Ghana. The goal: cover
-every route and location in the country, with the core algorithms
-(graphs, shortest-path, spatial indexing, GPS trilateration) implemented by hand
-so the whole thing is understandable end to end.
+So the routing, the search, the GPS positioning math... all of that is written
+by hand in this repo. It covers the whole country, from Accra down to the coast
+and all the way up to Bolgatanga and Wa.
 
-> Status: **early development.** The engine (`@ghmap/core`) is working and
-> tested. Web and mobile apps are being built on top of it.
+Right now the engine is done and tested, and there's a working web map on top of
+it. Mobile is next.
 
----
+## What it does so far
 
-## What's inside
+* Finds the best route between any two places, either fastest or shortest
+* Searches and snaps to the nearest town for any point you click
+* Simulates a full GPS satellite constellation and works out your position from
+  the signals, the same way a real GPS chip does
+* Shows everything on an interactive map with a satellite imagery view
 
-GhMap is a TypeScript monorepo so the web and mobile apps share one engine.
+## How it's put together
+
+It's a TypeScript monorepo so the web app and the future mobile app can share the
+same engine.
 
 ```
 ghmap/
-├── packages/
-│   └── core/          @ghmap/core — the platform-agnostic engine
-│       └── src/
-│           ├── geo.ts            lat/lng math: haversine, bearings, ECEF
-│           ├── priority-queue.ts hand-written binary min-heap
-│           ├── graph.ts          the road network as a weighted graph
-│           ├── routing.ts        Dijkstra + A* shortest paths
-│           ├── spatial-index.ts  uniform grid for nearest-place queries
-│           ├── satellite.ts      GPS constellation + trilateration solver
-│           └── data/ghana.ts     seed cities & highways (all 16 regions)
-├── apps/
-│   ├── web/           React + MapLibre GL map (in progress)
-│   └── mobile/        Expo / React Native app (planned)
+  packages/
+    core/        the engine, no UI, runs anywhere
+      src/
+        geo.ts            distance and coordinate math
+        priority-queue.ts a binary heap, written from scratch
+        graph.ts          the road network
+        routing.ts        Dijkstra and A*
+        spatial-index.ts  grid for fast "nearest place" lookups
+        satellite.ts      the GPS constellation and position solver
+        data/ghana.ts     cities and highways across all 16 regions
+  apps/
+    web/         the React + MapLibre map
+    mobile/      coming soon
 ```
 
-## The four pillars
+## The interesting bits
 
-1. **Data structures, by hand.** A weighted directed graph for the road
-   network, a binary min-heap priority queue, and a uniform spatial grid — no
-   routing library doing the clever part for us.
-2. **Routing.** `dijkstra()` and `aStar()` both find optimal paths; A* uses a
-   straight-line (haversine) heuristic to explore far fewer nodes for the same
-   answer. Cost can be minimised by **distance** or **travel time**.
-3. **Hybrid map data.** A hand-built seed layer of Ghana's cities and primary
-   highways ships today; a later importer merges detailed OpenStreetMap geometry
-   on top.
-4. **Simulated satellites that actually work.** A Walker constellation of 24 GPS
-   satellites orbits in the model; a receiver "measures" pseudoranges, and an
-   iterated least-squares (Gauss–Newton) solver recovers its latitude, longitude
-   and clock bias — real GPS math, recovering position to within metres.
+**Routing.** There are two shortest path algorithms in here, Dijkstra and A*.
+They always agree on the answer, but A* is smarter about it because it uses the
+straight line distance to the goal as a hint, so it checks far fewer places
+before it finds the route. You can optimise for travel time or raw distance.
 
-## Quick start
+**The satellites.** This is the part I'm most happy with. There are 24 satellites
+orbiting in the model, just like the real GPS constellation. A receiver on the
+ground measures how long each signal takes to arrive, and then a least squares
+solver works backwards from those measurements to figure out the latitude,
+longitude, and even the error in the receiver's own clock. In testing it pins
+down a location in Kumasi to within about 5 metres.
 
-Requires Node 22+ (for native TypeScript execution).
+**The data.** Ghana's main cities and highways are built in by hand to start
+with, with real coordinates. The plan is to pull in full road detail from
+OpenStreetMap on top of that so it eventually knows every street.
+
+## Running it
+
+You need Node 22 or newer.
 
 ```bash
-npm install          # install workspace dependencies
-npm run demo         # tour the whole engine in your terminal
-npm test             # run the core test suite
-npm run build        # type-check and compile @ghmap/core
+npm install      # grab dependencies
+npm run demo     # see the whole engine run in your terminal
+npm test         # run the tests
+npm run web      # start the map at http://localhost:5173
 ```
 
-### Sample `npm run demo` output
-
-```
-Network: 43 places, 100 directed road segments
-
---- Route: Accra → Bolgatanga ---
-  A* by time: 804.0 km, 8h 56m via Accra → Nsawam → Nkawkaw → Kumasi → …
-  Optimality check: Dijkstra 8h 56m (explored 35) vs A* 8h 56m (explored 29)
-
---- Simulated GPS fix ---
-  Constellation: 24 satellites in 6 orbital planes
-  Satellites visible: 9
-  Solved position: (6.68862, -1.62440)
-  Position error: 4.5 m | GDOP 1.75 | clock bias est 75.0 km
-```
-
-## Using the engine
+## Using the engine in code
 
 ```ts
 import { buildGhanaGraph, aStar, simulateFix, buildConstellation } from "@ghmap/core";
@@ -87,23 +80,21 @@ const route = aStar(graph, "accra", "tamale", "time");
 console.log(route?.distanceM, route?.timeS, route?.path);
 
 const fix = simulateFix(buildConstellation(), { lat: 5.6037, lng: -0.187 }, 0);
-console.log(fix.fix?.position); // recovered lat/lng of Accra
+console.log(fix.fix?.position);
 ```
 
-## Roadmap
+## What's next
 
-- [x] Core engine: graph, routing, spatial index, satellite sim
-- [ ] Web app: interactive MapLibre map with route + GPS overlays
-- [ ] OpenStreetMap importer for full road geometry
-- [ ] Mobile app (Expo) sharing `@ghmap/core`
-- [ ] Turn-by-turn directions and place search UI
+* Pull in OpenStreetMap so every road in Ghana is covered
+* A mobile app that reuses the same engine
+* Place search, turn by turn directions, and more of the things you'd expect
+  from a proper maps app
 
 ## Contributing
 
-Issues and pull requests are welcome — especially corrections to Ghana's road
-network and place data. This is a learning-forward project; clarity of the
-algorithms matters as much as raw coverage.
+If you know Ghana's roads better than the data does (very likely), corrections
+are welcome. Open an issue or a pull request.
 
 ## License
 
-[MIT](./LICENSE)
+MIT. See the LICENSE file.
