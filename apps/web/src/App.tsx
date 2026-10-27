@@ -3,6 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   alternativeRoutes,
+  aStar,
   buildConstellation,
   buildDirections,
   randomTrip,
@@ -242,6 +243,9 @@ export function App() {
   }, [layer, mapLoaded]);
 
   // --- Compute routes whenever inputs change ---
+  // The best route is computed and shown immediately; alternatives (several
+  // more A* runs, costly on the full OSM graph) are deferred so the UI paints
+  // the primary route without blocking.
   useEffect(() => {
     if (!graph || !origin || !destination || origin === destination) {
       setRoutes([]);
@@ -249,23 +253,37 @@ export function App() {
       setNote(origin && origin === destination ? "Choose two different places." : "");
       return;
     }
+    let cancelled = false;
     const trafficOpt =
       trafficOn && metric === "time" ? { model: traffic!, date: new Date() } : undefined;
-    const alts = alternativeRoutes(graph, origin, destination, {
-      metric,
-      mode,
-      count: 3,
-      ...(trafficOpt ? { traffic: trafficOpt } : {}),
-    });
-    setRoutes(alts);
-    setSelected(0);
-    if (alts[0]) {
-      setSteps(buildDirections(graph, alts[0], mode));
-      setNote("");
-    } else {
+    const opts = { metric, mode, ...(trafficOpt ? { traffic: trafficOpt } : {}) };
+
+    setNote("Calculating route…");
+    const best = aStar(graph, origin, destination, opts);
+    if (cancelled) return;
+    if (!best) {
+      setRoutes([]);
       setSteps([]);
       setNote("No route found.");
+      return;
     }
+    setRoutes([best]);
+    setSelected(0);
+    setSteps(buildDirections(graph, best, mode));
+    setNote("");
+
+    const id = window.setTimeout(() => {
+      if (cancelled) return;
+      const alts = alternativeRoutes(graph, origin, destination, { ...opts, count: 3 });
+      if (!cancelled && alts.length > 1) {
+        setRoutes(alts);
+        setSelected(0);
+      }
+    }, 50);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
   }, [graph, traffic, origin, destination, metric, mode, trafficOn]);
 
   // Rebuild steps when the selected alternative changes.
