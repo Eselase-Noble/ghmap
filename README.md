@@ -13,15 +13,23 @@ it. Mobile is next.
 
 ## What it does so far
 
-* Finds the best route between any two places, either fastest or shortest
+* Routes on the real Ghana road network imported from OpenStreetMap, every road
+  class from motorways down to residential streets, so routes follow the actual
+  roads rather than straight lines
+* Finds the best route between any two places, either fastest or shortest, and
+  offers a few alternative routes to choose from
 * Drive, cycle, or walk, with travel times that change to match
+* Estimates traffic the Ghana way, with the morning and evening rush and the
+  heavy congestion around Accra and Kumasi, and colours the route for it
 * Gives you turn by turn directions for the route
-* Search box with live suggestions as you type
+* Real time navigation that drives the route with a moving camera, live speed,
+  distance and arrival time, and a position worked out from the satellite GPS
+  simulation as it goes
+* Tracks your own live location and follows you on the map
+* Live view of simulated vehicles moving around the country
+* Search box with live suggestions, saved places and recent searches
 * Right click anywhere for directions from or to that spot
-* Finds your own location and routes from there
 * Shares the current route as a link you can send to someone
-* Simulates a full GPS satellite constellation and works out your position from
-  the signals, the same way a real GPS chip does
 * Shows everything on an interactive map with a satellite imagery view
 
 ## How it's put together
@@ -60,9 +68,19 @@ solver works backwards from those measurements to figure out the latitude,
 longitude, and even the error in the receiver's own clock. In testing it pins
 down a location in Kumasi to within about 5 metres.
 
-**The data.** Ghana's main cities and highways are built in by hand to start
-with, with real coordinates. The plan is to pull in full road detail from
-OpenStreetMap on top of that so it eventually knows every street.
+**The data.** The real road network comes from OpenStreetMap. A script in the
+tools folder pulls Ghana's roads from the Overpass API one class at a time,
+rebuilds how they connect, trims the millions of shape points down to something
+a browser can load, and writes it out as one file the app reads. If that file
+isn't there, the app falls back to a smaller hand built set of cities and
+highways so it still works.
+
+To rebuild the road data yourself:
+
+```bash
+node tools/import-osm.mjs          # downloads and builds the network
+node tools/optimize-dataset.mjs    # shrinks it for the web
+```
 
 ## Running it
 
