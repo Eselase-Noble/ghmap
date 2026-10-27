@@ -14,7 +14,12 @@ it. Mobile is next.
 ## What it does so far
 
 * Finds the best route between any two places, either fastest or shortest
-* Searches and snaps to the nearest town for any point you click
+* Drive, cycle, or walk, with travel times that change to match
+* Gives you turn by turn directions for the route
+* Search box with live suggestions as you type
+* Right click anywhere for directions from or to that spot
+* Finds your own location and routes from there
+* Shares the current route as a link you can send to someone
 * Simulates a full GPS satellite constellation and works out your position from
   the signals, the same way a real GPS chip does
 * Shows everything on an interactive map with a satellite imagery view
@@ -87,8 +92,7 @@ console.log(fix.fix?.position);
 
 * Pull in OpenStreetMap so every road in Ghana is covered
 * A mobile app that reuses the same engine
-* Place search, turn by turn directions, and more of the things you'd expect
-  from a proper maps app
+* Live traffic, saved places, and alternative routes
 
 ## Contributing
 
