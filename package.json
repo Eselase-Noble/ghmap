@@ -1,0 +1,21 @@
+{
+  "name": "ghmap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GhMap — an open-source map of Ghana: routing, spatial search, and a simulated GPS satellite positioning engine.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @ghmap/core",
+    "test": "npm run test --workspace @ghmap/core",
+    "demo": "node --experimental-strip-types packages/core/src/demo.ts",
+    "web": "npm run dev --workspace @ghmap/web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
