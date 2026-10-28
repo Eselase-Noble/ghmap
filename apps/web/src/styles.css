@@ -302,6 +302,121 @@ select:focus {
   transform-origin: center;
 }
 
+/* Add-a-place form */
+.add-place {
+  position: absolute;
+  z-index: 45;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(320px, calc(100vw - 32px));
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+}
+.ap-title {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.add-place input {
+  width: 100%;
+  font: inherit;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #121d2e;
+  color: var(--text);
+  padding: 9px 11px;
+}
+.add-place input:focus {
+  outline: 2px solid var(--gh-gold);
+}
+.ap-coords {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 8px 2px;
+}
+.ap-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.ap-actions button {
+  width: auto;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: #121d2e;
+}
+.ap-actions .primary {
+  background: var(--gh-green);
+  border-color: var(--gh-green);
+  color: #fff;
+  font-weight: 600;
+}
+.ap-actions .primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Custom place marker */
+.custom-marker {
+  width: 16px;
+  height: 16px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: #8b5cf6;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+/* My places list */
+.myplaces-h {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+.myplaces {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.myplaces li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mp-name {
+  width: auto;
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.mp-name:hover {
+  color: var(--gh-gold);
+}
+.mp-del {
+  width: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.mp-del:hover {
+  color: var(--gh-red);
+}
+
 .sug-head {
   font-size: 10.5px;
   text-transform: uppercase;

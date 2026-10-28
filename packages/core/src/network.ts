@@ -27,7 +27,7 @@ export interface RoadNetworkData {
   names: string[];
   /** [u, v, lengthM, classCode, oneway, nameIdx, geomFlat(lng,lat,…)] */
   edges: [number, number, number, number, number, number, number[]][];
-  places: { name: string; kind: string; node: number }[];
+  places: { name: string; kind: string; node: number; region?: string }[];
 }
 
 export interface LoadedNetwork {
@@ -78,11 +78,14 @@ export function loadRoadNetwork(data: RoadNetworkData): LoadedNetwork {
     }
   }
 
-  const gazPlaces: GazPlace[] = places.map((p) => ({
-    id: id(p.node),
+  // Each place gets a unique id (several can share a junction node).
+  const gazPlaces: GazPlace[] = places.map((p, i) => ({
+    id: `p${i}`,
     name: p.name,
     kind: p.kind,
     location: coord(p.node),
+    node: id(p.node),
+    ...(p.region ? { region: p.region } : {}),
   }));
 
   return { graph, places: gazPlaces, meta };

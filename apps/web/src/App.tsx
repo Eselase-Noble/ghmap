@@ -6,18 +6,29 @@ import {
   aStar,
   buildConstellation,
   buildDirections,
+  Gazetteer,
   randomTrip,
   simulateFix,
   TripSimulator,
   type CostMode,
   type DirectionStep,
+  type GazPlace,
   type RouteResult,
   type TravelMode,
   type TripState,
 } from "@ghmap/core";
 import { PlaceInput } from "./PlaceInput.tsx";
 import { loadDataset, type Dataset } from "./dataset.ts";
-import { getRecent, getSaved, pushRecent, toggleSaved } from "./storage.ts";
+import {
+  addCustomPlace,
+  getCustomPlaces,
+  getRecent,
+  getSaved,
+  pushRecent,
+  removeCustomPlace,
+  toggleSaved,
+  type CustomPlace,
+} from "./storage.ts";
 import {
   BASE_STYLE,
   EMPTY_FC,
@@ -103,22 +114,47 @@ export function App() {
   const [tracking, setTracking] = useState(false);
   const watchId = useRef<number | null>(null);
 
+  const [custom, setCustom] = useState<CustomPlace[]>([]);
+  const [adding, setAdding] = useState<{ lat: number; lng: number; name: string } | null>(null);
+
   const constellation = useMemo(() => buildConstellation(), []);
   const graph = dataset?.graph ?? null;
-  const gazetteer = dataset?.gazetteer ?? null;
   const traffic = dataset?.traffic ?? null;
 
+  // Gazetteer = dataset places + the user's own custom places (snapped to the
+  // nearest road junction so they can be routed to). Rebuilt when either changes.
+  const gazetteer = useMemo(() => {
+    if (!dataset) return null;
+    const customGaz: GazPlace[] = custom.map((c) => {
+      const near = dataset.nodeGrid.nearest({ lat: c.lat, lng: c.lng });
+      return {
+        id: c.id,
+        name: c.name,
+        kind: "custom",
+        location: { lat: c.lat, lng: c.lng },
+        node: near?.id ?? c.id,
+      };
+    });
+    return new Gazetteer([...dataset.places, ...customGaz]);
+  }, [dataset, custom]);
+
+  const resolveNode = useCallback((id: string) => gazetteer?.node(id) ?? id, [gazetteer]);
   const nameOf = useCallback((id: string) => gazetteer?.get(id)?.name ?? id, [gazetteer]);
 
   // --- Load dataset + saved/recent once ---
   useEffect(() => {
     setSaved(getSaved());
     setRecent(getRecent());
+    setCustom(getCustomPlaces());
     loadDataset().then((d) => {
       setDataset(d);
-      // Sensible defaults if URL didn't specify.
-      setOrigin((o) => o ?? (d.gazetteer.search("Accra", 1)[0]?.id ?? null));
-      setDestination((dn) => dn ?? (d.gazetteer.search("Kumasi", 1)[0]?.id ?? null));
+      // Sensible defaults if the URL didn't specify.
+      const find = (q: string) =>
+        d.places.find((p) => p.name.toLowerCase() === q && (p.kind === "capital" || p.kind === "city"))?.id ??
+        d.places.find((p) => p.name.toLowerCase() === q)?.id ??
+        null;
+      setOrigin((o) => o ?? find("accra"));
+      setDestination((dn) => dn ?? find("kumasi"));
     });
   }, []);
 
@@ -235,6 +271,26 @@ export function App() {
     return () => markers.forEach((m) => m.remove());
   }, [mapLoaded, dataset, gazetteer]);
 
+  // --- Custom place markers ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const markers = custom.map((c) => {
+      const el = document.createElement("div");
+      el.className = "custom-marker";
+      el.title = c.name;
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setDestination(c.id);
+      });
+      return new maplibregl.Marker({ element: el })
+        .setLngLat([c.lng, c.lat])
+        .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(`<strong>${c.name}</strong><br/>your place`))
+        .addTo(map);
+    });
+    return () => markers.forEach((m) => m.remove());
+  }, [custom, mapLoaded]);
+
   // --- Satellite layer toggle ---
   useEffect(() => {
     const map = mapRef.current;
@@ -257,9 +313,11 @@ export function App() {
     const trafficOpt =
       trafficOn && metric === "time" ? { model: traffic!, date: new Date() } : undefined;
     const opts = { metric, mode, ...(trafficOpt ? { traffic: trafficOpt } : {}) };
+    const from = resolveNode(origin);
+    const to = resolveNode(destination);
 
     setNote("Calculating route…");
-    const best = aStar(graph, origin, destination, opts);
+    const best = aStar(graph, from, to, opts);
     if (cancelled) return;
     if (!best) {
       setRoutes([]);
@@ -274,7 +332,7 @@ export function App() {
 
     const id = window.setTimeout(() => {
       if (cancelled) return;
-      const alts = alternativeRoutes(graph, origin, destination, { ...opts, count: 3 });
+      const alts = alternativeRoutes(graph, from, to, { ...opts, count: 3 });
       if (!cancelled && alts.length > 1) {
         setRoutes(alts);
         setSelected(0);
@@ -284,7 +342,7 @@ export function App() {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [graph, traffic, origin, destination, metric, mode, trafficOn]);
+  }, [graph, traffic, origin, destination, metric, mode, trafficOn, resolveNode]);
 
   // Rebuild steps when the selected alternative changes.
   useEffect(() => {
@@ -566,6 +624,14 @@ export function App() {
     setSaved(toggleSaved(id));
   }
 
+  function saveCustom() {
+    if (!adding || !adding.name.trim()) return;
+    const next = addCustomPlace(adding.name.trim(), adding.lat, adding.lng);
+    setCustom(next);
+    setDestination(next[0]!.id);
+    setAdding(null);
+  }
+
   function share() {
     navigator.clipboard?.writeText(window.location.href).then(() => {
       setCopied(true);
@@ -642,6 +708,40 @@ export function App() {
           >
             Directions to here
           </button>
+          <button
+            onMouseDown={() => {
+              setAdding({ lat: menu.lat, lng: menu.lng, name: "" });
+              setMenu(null);
+            }}
+          >
+            Add a place here
+          </button>
+        </div>
+      ) : null}
+
+      {/* Add-a-place form */}
+      {adding ? (
+        <div className="add-place">
+          <div className="ap-title">Add a place</div>
+          <input
+            autoFocus
+            value={adding.name}
+            placeholder="Name this place"
+            onChange={(e) => setAdding({ ...adding, name: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveCustom();
+              if (e.key === "Escape") setAdding(null);
+            }}
+          />
+          <div className="ap-coords">
+            {adding.lat.toFixed(5)}, {adding.lng.toFixed(5)}
+          </div>
+          <div className="ap-actions">
+            <button onClick={() => setAdding(null)}>Cancel</button>
+            <button className="primary" onClick={saveCustom} disabled={!adding.name.trim()}>
+              Save
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -800,11 +900,33 @@ export function App() {
             {note ? <div className="hint">{note}</div> : null}
           </div>
 
+          {custom.length ? (
+            <div className="card">
+              <h2 className="myplaces-h">My places</h2>
+              <ul className="myplaces">
+                {custom.map((c) => (
+                  <li key={c.id}>
+                    <button className="mp-name" onClick={() => setDestination(c.id)}>
+                      📍 {c.name}
+                    </button>
+                    <button
+                      className="mp-del"
+                      title="Delete"
+                      onClick={() => setCustom(removeCustomPlace(c.id))}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <p className="tagline">
             {dataset.source === "osm"
-              ? `${dataset.meta?.nodeCount.toLocaleString()} junctions · ${dataset.meta?.edgeCount.toLocaleString()} road segments · OpenStreetMap`
+              ? `${gazetteer.size.toLocaleString()} searchable places · ${dataset.meta?.edgeCount.toLocaleString()} road segments · OpenStreetMap`
               : `${dataset.graph.nodeCount} places · ${dataset.graph.roadCount} segments · seed data`}
-            {" · right-click for directions"}
+            {" · right-click the map to add a place or get directions"}
           </p>
         </aside>
       ) : null}

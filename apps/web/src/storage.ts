@@ -4,7 +4,16 @@
  */
 const SAVED_KEY = "ghmap.saved";
 const RECENT_KEY = "ghmap.recent";
+const CUSTOM_KEY = "ghmap.custom";
 const RECENT_LIMIT = 8;
+
+/** A location the user dropped and named themselves. */
+export interface CustomPlace {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+}
 
 function read(key: string): string[] {
   try {
@@ -33,6 +42,33 @@ export function toggleSaved(id: string): string[] {
   const cur = read(SAVED_KEY);
   const next = cur.includes(id) ? cur.filter((x) => x !== id) : [id, ...cur];
   write(SAVED_KEY, next);
+  return next;
+}
+
+export function getCustomPlaces(): CustomPlace[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_KEY);
+    if (!raw) return [];
+    const val = JSON.parse(raw);
+    return Array.isArray(val)
+      ? val.filter((p) => p && typeof p.id === "string" && typeof p.name === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addCustomPlace(name: string, lat: number, lng: number): CustomPlace[] {
+  const cur = getCustomPlaces();
+  const place: CustomPlace = { id: `custom:${Date.now()}`, name, lat, lng };
+  const next = [place, ...cur];
+  write(CUSTOM_KEY, next as unknown as string[]);
+  return next;
+}
+
+export function removeCustomPlace(id: string): CustomPlace[] {
+  const next = getCustomPlaces().filter((p) => p.id !== id);
+  write(CUSTOM_KEY, next as unknown as string[]);
   return next;
 }
 

@@ -57,6 +57,8 @@ export interface GazPlace {
   kind: string;
   location: LatLng;
   region?: string;
+  /** Graph node this place routes from/to (defaults to `id` if omitted). */
+  node?: string;
 }
 
 /**
@@ -84,6 +86,11 @@ export class Gazetteer {
 
   get(id: string): GazPlace | undefined {
     return this.byId.get(id);
+  }
+
+  /** The graph node a place id routes from/to (the place's own node, else id). */
+  node(id: string): string {
+    return this.byId.get(id)?.node ?? id;
   }
 
   /** Ranked autocomplete search (exact > prefix > substring; bigger places win). */
