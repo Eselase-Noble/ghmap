@@ -115,6 +115,7 @@ export function App() {
   const watchId = useRef<number | null>(null);
 
   const [custom, setCustom] = useState<CustomPlace[]>([]);
+  const [found, setFound] = useState<GazPlace[]>([]);
   const [adding, setAdding] = useState<{ lat: number; lng: number; name: string } | null>(null);
 
   const constellation = useMemo(() => buildConstellation(), []);
@@ -135,8 +136,27 @@ export function App() {
         node: near?.id ?? c.id,
       };
     });
-    return new Gazetteer([...dataset.places, ...customGaz]);
-  }, [dataset, custom]);
+    return new Gazetteer([...dataset.places, ...customGaz, ...found]);
+  }, [dataset, custom, found]);
+
+  // Turn a live online (Nominatim) result into a selectable, routable place.
+  const registerOnline = useCallback(
+    (r: { name: string; region: string; lat: number; lng: number; kind: string }) => {
+      const id = `found:${r.lat.toFixed(5)},${r.lng.toFixed(5)}`;
+      const near = dataset?.nodeGrid.nearest({ lat: r.lat, lng: r.lng });
+      const place: GazPlace = {
+        id,
+        name: r.name,
+        kind: r.kind || "place",
+        location: { lat: r.lat, lng: r.lng },
+        node: near?.id ?? id,
+        ...(r.region ? { region: r.region } : {}),
+      };
+      setFound((prev) => (prev.some((p) => p.id === id) ? prev : [place, ...prev].slice(0, 40)));
+      return id;
+    },
+    [dataset],
+  );
 
   const resolveNode = useCallback((id: string) => gazetteer?.node(id) ?? id, [gazetteer]);
   const nameOf = useCallback((id: string) => gazetteer?.get(id)?.name ?? id, [gazetteer]);
@@ -822,6 +842,7 @@ export function App() {
                 saved={saved}
                 recent={recent}
                 onToggleSaved={onToggle}
+                registerOnline={registerOnline}
               />
             </div>
             <div className="io">
@@ -835,6 +856,7 @@ export function App() {
                 saved={saved}
                 recent={recent}
                 onToggleSaved={onToggle}
+                registerOnline={registerOnline}
               />
               <button className="swap" title="Swap" onClick={swap}>
                 ⇅

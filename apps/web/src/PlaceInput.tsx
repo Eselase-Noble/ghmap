@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Gazetteer, GazPlace } from "@ghmap/core";
+import { geocodeGhana, type OnlineResult } from "./geocode.ts";
 
 interface Props {
   gazetteer: Gazetteer;
@@ -11,6 +12,8 @@ interface Props {
   saved?: string[];
   recent?: string[];
   onToggleSaved?: (id: string) => void;
+  /** Register an online (Nominatim) result as a selectable place; returns its id. */
+  registerOnline?: (r: OnlineResult) => string;
 }
 
 /** A search box with live suggestions, recent searches, and saved places. */
@@ -24,10 +27,13 @@ export function PlaceInput({
   saved = [],
   recent = [],
   onToggleSaved,
+  registerOnline,
 }: Props) {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [online, setOnline] = useState<OnlineResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,6 +48,30 @@ export function PlaceInput({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  // Debounced live OpenStreetMap search for anything not in the local dataset.
+  useEffect(() => {
+    if (!open || !registerOnline) {
+      setOnline([]);
+      return;
+    }
+    const q = text.trim();
+    if (q.length < 3) {
+      setOnline([]);
+      return;
+    }
+    const ctl = new AbortController();
+    setSearching(true);
+    const t = window.setTimeout(async () => {
+      const r = await geocodeGhana(q, ctl.signal);
+      setOnline(r);
+      setSearching(false);
+    }, 450);
+    return () => {
+      window.clearTimeout(t);
+      ctl.abort();
+    };
+  }, [text, open, registerOnline]);
 
   const typing = text.trim().length > 0;
   const suggestions: GazPlace[] = open
@@ -107,7 +137,7 @@ export function PlaceInput({
         </button>
       ) : null}
 
-      {open && (suggestions.length > 0 || onUseMyLocation) ? (
+      {open && (suggestions.length > 0 || onUseMyLocation || online.length > 0 || (typing && searching)) ? (
         <ul className="suggestions">
           {onUseMyLocation ? (
             <li
@@ -148,6 +178,29 @@ export function PlaceInput({
               ) : null}
             </li>
           ))}
+
+          {typing && registerOnline ? (
+            <>
+              <li className="sug-head">
+                Found online {searching ? "…" : online.length === 0 ? "— nothing in OpenStreetMap" : ""}
+              </li>
+              {online.map((r, i) => (
+                <li
+                  key={`on-${i}`}
+                  className="suggestion online"
+                  onMouseDown={() => {
+                    const id = registerOnline(r);
+                    onSelect(id);
+                    setText(r.name);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="name">🌐 {r.name}</span>
+                  <span className="region">{r.region}</span>
+                </li>
+              ))}
+            </>
+          ) : null}
         </ul>
       ) : null}
     </div>
